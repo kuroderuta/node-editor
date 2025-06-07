@@ -714,35 +714,34 @@ class NodeEditor {
         this._renderToolbar();
     }
     
-    pasteNodes() {
-        if (this.state.copiedNodes.length === 0) return;
-        const graph = this.getCurrentGraph();
-        this.clearSelection();
+	pasteNodes() {
+		if (this.state.copiedNodes.length === 0) return;
+		const graph = this.getCurrentGraph();
+		this.clearSelection();
 
-        this.state.copiedNodes.forEach(nodeData => {
-            const newNode = JSON.parse(JSON.stringify(nodeData));
-            newNode.id = `node_${this.state.nodeCounter++}`;
-            newNode.title += ' (Copy)';
-            newNode.x += GRID_SIZE;
-            newNode.y += GRID_SIZE;
-            
-            if (newNode.subgraphId) {
-                const originalSubgraph = this.findGraphById(newNode.subgraphId);
-                if (originalSubgraph) {
-                    const newSubgraph = JSON.parse(JSON.stringify(originalSubgraph));
-                    newSubgraph.id = `graph_${newNode.id}`;
-                    newSubgraph.name = newNode.title;
-                    this.state.graphs[newSubgraph.id] = newSubgraph;
-                    newNode.subgraphId = newSubgraph.id;
-                }
-            }
-            
-            graph.nodes.push(newNode);
-            this.state.selectedNodeIds.add(newNode.id);
-        });
+		this.state.copiedNodes.forEach(nodeData => {
+			const newNode = JSON.parse(JSON.stringify(nodeData));
+			newNode.id = `node_${this.state.nodeCounter++}`;
+			newNode.x += GRID_SIZE;
+			newNode.y += GRID_SIZE;
+			
+			if (newNode.subgraphId) {
+				const originalSubgraph = this.findGraphById(newNode.subgraphId);
+				if (originalSubgraph) {
+					const newSubgraph = JSON.parse(JSON.stringify(originalSubgraph));
+					newSubgraph.id = `graph_${newNode.id}`;
+					newSubgraph.name = newNode.title;
+					this.state.graphs[newSubgraph.id] = newSubgraph;
+					newNode.subgraphId = newSubgraph.id;
+				}
+			}
+			
+			graph.nodes.push(newNode);
+			this.state.selectedNodeIds.add(newNode.id);
+		});
 
-        this.render();
-    }
+		this.render();
+	}
 
     _onCanvasContentInput(e) {
         if (e.target.classList.contains('node-text')) {

@@ -77,7 +77,7 @@ body {
 
 .canvas {
     position: fixed;
-    top: 64px; /* Adjusted to give space for toolbar */
+    top: 64px;
     left: 0;
     right: 0;
     bottom: 0;
@@ -159,7 +159,7 @@ body {
     background: #1a1a1a;
     border: 1px solid #555;
     color: #fff;
-    font-size: 14px; /* Maintained for readability */
+    font-size: 14px;
     resize: none;
     outline: none;
     min-height: 64px;
@@ -197,7 +197,7 @@ body {
 
 .connection-point-label {
     position: absolute;
-    font-size: 12px; /* Adjusted for clarity */
+    font-size: 12px;
     color: #ccc;
     white-space: nowrap;
     pointer-events: none;
@@ -319,7 +319,7 @@ body {
     position: fixed;
     top: 64px;
     right: 0;
-    width: 256px; /* Adjusted from 300px */
+    width: 256px;
     height: calc(100vh - 64px);
     background: #2a2a2a;
     border-left: 1px solid #444;
@@ -398,12 +398,12 @@ body {
     background-color: #3a3a3a;
     border: 1px solid #555;
     color: #fff;
-    padding: 2px 8px; /* Adjusted */
+    padding: 2px 8px;
     border-radius: 4px;
     font-family: inherit;
-    font-size: 14px; /* Maintained for readability */
+    font-size: 14px;
     font-weight: bold;
-    width: 256px; /* Adjusted */
+    width: 256px;
     margin-right: 4px;
 }
 
