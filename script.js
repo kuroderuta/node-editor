@@ -5,8 +5,8 @@
 const GRID_SIZE = 32;
 const NODE_MIN_WIDTH = 256;
 const NODE_MIN_HEIGHT = 128;
-const CONNECTION_POINT_Y_OFFSET = 40;
-const CONNECTION_POINT_Y_SPACING = 30;
+const CONNECTION_POINT_Y_OFFSET = 32;
+const CONNECTION_POINT_Y_SPACING = 32;
 const ZOOM_SENSITIVITY = 0.1;
 const MAX_ZOOM = 3;
 const MIN_ZOOM = 0.2;
@@ -372,6 +372,39 @@ class NodeEditor {
             const item = document.createElement('span');
             item.textContent = graph.name;
             item.className = 'breadcrumb-item';
+
+            // **MODIFICATION**: Make the root breadcrumb editable
+            if (index === 0) {
+                item.title = "Click to rename project";
+                item.addEventListener('click', () => {
+                    if (document.activeElement !== item) {
+                        item.contentEditable = true;
+                        item.focus();
+                        document.execCommand('selectAll', false, null);
+                    }
+                });
+
+                item.addEventListener('blur', () => {
+                    item.contentEditable = false;
+                    const newName = item.textContent.trim();
+                    if (newName && this.state.graphs['root'].name !== newName) {
+                        this.state.graphs['root'].name = newName;
+                    } else {
+                        item.textContent = this.state.graphs['root'].name;
+                    }
+                });
+
+                item.addEventListener('keydown', (evt) => {
+                    if (evt.key === 'Enter') {
+                        evt.preventDefault();
+                        item.blur();
+                    } else if (evt.key === 'Escape') {
+                        item.textContent = this.state.graphs['root'].name;
+                        item.blur();
+                    }
+                });
+            }
+
 
             if (index === this.state.navigationStack.length - 1) {
                 item.classList.add('active');
@@ -808,6 +841,19 @@ class NodeEditor {
     // =================================================================
 
     saveGraph() {
+        const rootGraph = this.state.graphs['root'];
+        
+        // **MODIFICATION**: If the root graph has the default name, prompt the user.
+        if (rootGraph.name === 'Root') {
+            const newName = prompt("Please enter a project name:", "My Project");
+            if (newName && newName.trim() !== '') {
+                rootGraph.name = newName.trim();
+                this._renderToolbar(); // Update the UI to show the new name
+            } else {
+                return; // User cancelled or entered an empty name, abort saving.
+            }
+        }
+
         // We only need to save the state, as it contains everything.
         const dataStr = JSON.stringify(this.state, (key, value) => {
             if (value instanceof Set) {
@@ -817,9 +863,13 @@ class NodeEditor {
         }, 2);
         
         const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
+        
+        // **MODIFICATION**: Create a safe filename from the root graph's name.
+        const fileName = `${rootGraph.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`;
+
         const linkElement = document.createElement('a');
         linkElement.setAttribute('href', dataUri);
-        linkElement.setAttribute('download', 'refactored_graph.json');
+        linkElement.setAttribute('download', fileName);
         linkElement.click();
     }
 
@@ -1006,13 +1056,21 @@ class NodeEditor {
             this.interaction.isSelecting = false;
             this.selectionBox.style.display = 'none';
             
+            // **FIX**: Calculate selection box from stored canvas coordinates
+            const endPos = this.getCanvasCoordinates(e.clientX, e.clientY);
+            const startPos = this.interaction.selectionStart;
+
             const box = {
-                left: parseInt(this.selectionBox.style.left),
-                top: parseInt(this.selectionBox.style.top),
-                right: parseInt(this.selectionBox.style.left) + parseInt(this.selectionBox.style.width),
-                bottom: parseInt(this.selectionBox.style.top) + parseInt(this.selectionBox.style.height)
+                left: Math.min(startPos.x, endPos.x),
+                top: Math.min(startPos.y, endPos.y),
+                right: Math.max(startPos.x, endPos.x),
+                bottom: Math.max(startPos.y, endPos.y)
             };
-            this.selectNodesInBox(box);
+            
+            // Only trigger selection if the box is larger than a few pixels
+            if (box.right - box.left > 5 || box.bottom - box.top > 5) {
+                 this.selectNodesInBox(box);
+            }
         }
         else if (this.interaction.isConnecting) {
             const tempLine = this.canvasContent.querySelector('.connection-line.active');
@@ -1034,14 +1092,14 @@ class NodeEditor {
         if (!this.contextMenu.contains(target)) this.contextMenu.style.display = 'none';
         if (!this.connectionContextMenu.contains(target)) this.connectionContextMenu.style.display = 'none';
         
-        // Clear selection if clicking on the background
-        if (target === this.canvas || target === this.canvasContent) {
+        // Clear selection if clicking on the background, but not if starting a drag selection
+        if ((target === this.canvas || target === this.canvasContent) && !this.interaction.isSelecting) {
              this.clearSelection();
         }
         
         // Handle node selection
         const nodeEl = target.closest('.node');
-        if (nodeEl && !target.classList.contains('node-text')) { // Prevent selection change when clicking textarea
+        if (nodeEl && !target.classList.contains('node-text') && !target.closest('.breadcrumb-item')) { // Prevent selection change when clicking textarea or breadcrumb
             const nodeId = nodeEl.dataset.nodeId;
             if (e.detail === 1) { // Single click
                 if (!this.interaction.isDragging) { // Don't re-select at the end of a drag
@@ -1141,8 +1199,9 @@ class NodeEditor {
     }
     
     _onKeyDown(e) {
-        // Ignore key events if an input field is focused
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        // Ignore key events if an input field is focused, unless it's the breadcrumb
+        if ((e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') && !e.target.classList.contains('breadcrumb-item')) return;
+
 
         if (e.ctrlKey || e.metaKey) {
             switch (e.key.toLowerCase()) {
