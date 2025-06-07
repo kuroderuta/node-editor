@@ -671,12 +671,12 @@ class NodeEditor {
 
         const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}.json`;
 
-        const dataStr = JSON.stringify(this.state, (key, value) => {
-            if (value instanceof Set) {
-                return Array.from(value);
-            }
-            return value;
-        }, 2);
+        const saveData = {
+            version: "1.0.0",
+            graphs: this.state.graphs 
+        };
+
+        const dataStr = JSON.stringify(saveData, null, 2);
         
         const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
         const linkElement = document.createElement('a');
@@ -688,17 +688,38 @@ class NodeEditor {
     loadGraph(event) {
         const file = event.target.files[0];
         if (!file) return;
+
         const reader = new FileReader();
         reader.onload = (e) => {
             try {
-                const loadedState = JSON.parse(e.target.result);
-                loadedState.selectedNodeIds = new Set(loadedState.selectedNodeIds || []);
-                this.state = loadedState;
+                const loadedData = JSON.parse(e.target.result);
+
+                if (!loadedData || !loadedData.graphs) {
+                    throw new Error("Invalid or corrupted file format.");
+                }
+
+                this.resetState();
+
+                this.state.graphs = loadedData.graphs;
+
+                let maxId = 0;
+                Object.values(this.state.graphs).forEach(graph => {
+                    graph.nodes.forEach(node => {
+                        const idNum = parseInt(node.id.split('_')[1], 10);
+                        if (!isNaN(idNum) && idNum > maxId) {
+                            maxId = idNum;
+                        }
+                    });
+                });
+                this.state.nodeCounter = maxId + 1;
+
                 this.render();
+
             } catch (error) {
                 alert('Error loading graph: ' + error.message);
             }
         };
+        
         reader.readAsText(file);
         event.target.value = '';
     }
