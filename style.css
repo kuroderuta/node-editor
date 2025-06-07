@@ -179,6 +179,20 @@ body {
     border-color: #4a9eff;
 }
 
+.node-text-readonly {
+    width: 100%;
+    background: #1a1a1a;
+    color: #aaa;
+    font-size: 14px;
+    font-style: italic;
+    resize: none;
+    min-height: 60px;
+    padding: 8px;
+    border-radius: 3px;
+    flex-grow: 1;
+    border: 1px solid #555;
+}
+
 .connection-point {
     position: absolute;
     width: 14px;

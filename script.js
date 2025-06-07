@@ -230,7 +230,7 @@ class NodeEditor {
         });
     }
     
-    /**
+	/**
      * Creates and appends a single node element to the canvas.
      * @param {object} nodeData - The data for the node to render.
      */
@@ -246,10 +246,15 @@ class NodeEditor {
         nodeEl.style.width = `${nodeData.width}px`;
         nodeEl.style.height = `${nodeData.height}px`;
 
+        // MODIFICATION: Use a div for readonly text and a textarea for editable text.
+        const textContentHTML = nodeData.type === 'default'
+            ? `<textarea class="node-text" placeholder="Enter text...">${nodeData.text}</textarea>`
+            : `<div class="node-text-readonly">${nodeData.text}</div>`;
+
         let innerHTML = `
             <div class="node-header">${nodeData.title}</div>
             <div class="node-content">
-                <textarea class="node-text" placeholder="Enter text..." ${nodeData.type !== 'default' ? 'readonly' : ''}>${nodeData.text}</textarea>
+                ${textContentHTML}
             </div>
         `;
         
@@ -390,7 +395,7 @@ class NodeEditor {
         });
     }
 
-    /**
+	/**
      * Renders the properties panel based on the current selection.
      */
     _renderPropertiesPanel() {
@@ -410,15 +415,21 @@ class NodeEditor {
             if (!nodeData) return;
             
             const isIoNode = nodeData.type === 'graph-input' || nodeData.type === 'graph-output';
+            
+            // MODIFICATION: Conditionally show the Text Content section.
+            const textContentHTML = !isIoNode ? `
+                <div class="property-group">
+                    <label>Text Content:</label>
+                    <textarea id="propNodeContent" rows="4" data-node-id="${nodeId}">${nodeData.text}</textarea>
+                </div>
+            ` : '';
+
             html = `
                 <div class="property-group">
                     <label>Node Title:</label>
                     <input type="text" id="propNodeTitle" value="${nodeData.title}" data-node-id="${nodeId}">
                 </div>
-                <div class="property-group">
-                    <label>Text Content:</label>
-                    <textarea id="propNodeContent" rows="4" data-node-id="${nodeId}" ${isIoNode ? 'readonly' : ''}>${nodeData.text}</textarea>
-                </div>
+                ${textContentHTML}
                 <div class="property-group">
                     <label>Node Color:</label>
                     <div class="color-options">
