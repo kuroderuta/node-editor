@@ -93,7 +93,7 @@ class NodeEditor {
 
         document.getElementById('addNodeBtn').addEventListener('click', () => this.addNode());
         document.getElementById('saveBtn').addEventListener('click', () => this.saveGraph());
-        // Link the new "Save Simplified" button
+        // Link to the new, improved simple save function
         document.getElementById('saveSimpleBtn').addEventListener('click', () => this.saveSimpleGraph());
         document.getElementById('loadBtn').addEventListener('click', () => document.getElementById('loadFile').click());
         document.getElementById('loadFile').addEventListener('change', (e) => this.loadGraph(e));
@@ -656,6 +656,11 @@ class NodeEditor {
         this.render();
     }
 
+    // ----- SAVE & LOAD -----
+
+    /**
+     * Saves the full graph data to the original, detailed JSON format.
+     */
     saveGraph() {
         const rootGraph = this.findGraphById('root');
         if (!rootGraph) return;
@@ -688,7 +693,7 @@ class NodeEditor {
     }
 
     /**
-     * UPDATED: Now detects file format (simple vs. detailed) and loads accordingly.
+     * UPDATED: Smart loader that detects file format (full, legacy simple, or new readable) and loads accordingly.
      */
     loadGraph(event) {
         const file = event.target.files[0];
@@ -702,39 +707,48 @@ class NodeEditor {
                 if (!loadedData) {
                     throw new Error("File is empty or invalid.");
                 }
-
-                if (loadedData.story && loadedData.title) {
-                    // This is the new, simplified format
-                    this._loadSimpleGraph(loadedData);
-
+                
+                // Check for the new readable format first
+                if (loadedData.format === "node-graph-v2-readable" && loadedData.graph) {
+                    this._loadReadableGraph(loadedData);
+                
+                // Check for the original, detailed format
                 } else if (loadedData.graphs && loadedData.version) {
-                    // This is the original, detailed format
-                    this.resetState();
-                    this.state.graphs = loadedData.graphs;
-
-                    let maxId = 0;
-                    Object.values(this.state.graphs).forEach(graph => {
-                        graph.nodes.forEach(node => {
-                            const idNum = parseInt(node.id.split('_')[1], 10);
-                            if (!isNaN(idNum) && idNum > maxId) {
-                                maxId = idNum;
-                            }
-                        });
-                    });
-                    this.state.nodeCounter = maxId + 1;
-                    this.render();
-
+                    this._loadFullGraph(loadedData);
+                
+                // Check for the legacy, simplified format for backward compatibility
+                } else if (loadedData.story && loadedData.title) {
+                    this._loadLegacySimpleGraph(loadedData);
+                
                 } else {
-                    throw new Error("Invalid or corrupted file format.");
+                    throw new Error("Invalid or unsupported file format.");
                 }
 
             } catch (error) {
                 alert('Error loading graph: ' + error.message);
+                console.error(error);
             }
         };
 
         reader.readAsText(file);
         event.target.value = ''; // Reset file input
+    }
+    
+    _loadFullGraph(loadedData) {
+        this.resetState();
+        this.state.graphs = loadedData.graphs;
+
+        let maxId = 0;
+        Object.values(this.state.graphs).forEach(graph => {
+            graph.nodes.forEach(node => {
+                const idNum = parseInt(node.id.split('_')[1], 10);
+                if (!isNaN(idNum) && idNum > maxId) {
+                    maxId = idNum;
+                }
+            });
+        });
+        this.state.nodeCounter = maxId + 1;
+        this.render();
     }
 
     copySelectedNodes() {
@@ -776,12 +790,12 @@ class NodeEditor {
 
         this.render();
     }
-
-    // ----- NEW AND UPDATED METHODS FOR SIMPLIFIED FORMAT -----
+    
+    // ----- NEW READABLE & DATA-COMPLETE SAVE/LOAD -----
 
     /**
-     * NEW: Saves the graph to a simplified, human-readable JSON file.
-     * This format is robust against duplicate node names by using a unique `id` field.
+     * REPLACED: Saves the graph to a new, human-readable JSON file that preserves all data.
+     * This format uses nested objects for subgraphs and readable string IDs for nodes.
      */
     saveSimpleGraph() {
         const rootGraph = this.findGraphById('root');
@@ -798,16 +812,32 @@ class NodeEditor {
             }
         }
 
-        const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}_simple.json`;
+        const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}_readable.json`;
 
-        const simpleGraphData = {
+        // 1. Create unique handles for every node across all graphs.
+        const nodeIdToHandleMap = new Map();
+        const usedHandles = new Set();
+        Object.values(this.state.graphs).forEach(graph => {
+            graph.nodes.forEach(node => {
+                const baseName = node.title || node.type;
+                const handle = this._generateUniqueHandle(baseName, usedHandles);
+                usedHandles.add(handle);
+                nodeIdToHandleMap.set(node.id, handle);
+            });
+        });
+
+        // 2. Recursively convert the entire graph structure.
+        const readableGraph = this._convertGraphToReadable(rootGraph.id, nodeIdToHandleMap);
+
+        const saveData = {
+            format: "node-graph-v2-readable", // Version identifier
             title: rootGraph.name,
-            story: this._convertGraphToSimple('root')
+            graph: readableGraph
         };
 
-        const dataStr = JSON.stringify(simpleGraphData, null, 2);
+        const dataStr = JSON.stringify(saveData, null, 2);
         const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
-
+        
         const linkElement = document.createElement('a');
         linkElement.setAttribute('href', dataUri);
         linkElement.setAttribute('download', fileName);
@@ -815,127 +845,152 @@ class NodeEditor {
     }
 
     /**
-     * NEW: Helper to generate a unique, URL-friendly handle from a string.
-     * Ensures handles like 'my-node' and 'my-node-2' are generated if names conflict.
-     * @param {string} baseName - The string to convert to a handle (e.g., node title).
-     * @param {Set<string>} existingHandles - A set of handles that are already in use.
-     * @returns {string} A unique handle.
+     * HELPER: Recursively converts a graph and its subgraphs into a nested, readable format.
      */
-    _generateUniqueHandle(baseName, existingHandles) {
-        let handle = (baseName || 'unnamed-node').toLowerCase()
-            .trim()
-            .replace(/[^a-z0-9\s-]/g, '')
-            .replace(/\s+/g, '-');
-
-        if (!handle) {
-            handle = 'unnamed-node';
-        }
-
-        let finalHandle = handle;
-        let counter = 1;
-        while (existingHandles.has(finalHandle)) {
-            counter++;
-            finalHandle = `${handle}-${counter}`;
-        }
-        return finalHandle;
-    }
-
-    /**
-     * UPDATED: Recursively converts a graph to the simplified format.
-     * Now generates and uses a unique `id` for each node to handle connections reliably.
-     * Note: This simplified format does not preserve the I/O interface of subgraphs.
-     * @param {string} graphId - The ID of the graph to convert.
-     * @returns {Array<Object>} An array of simplified node objects.
-     */
-    _convertGraphToSimple(graphId) {
+    _convertGraphToReadable(graphId, nodeIdToHandleMap) {
         const graph = this.findGraphById(graphId);
-        if (!graph) return [];
+        if (!graph) return null;
 
-        const story = [];
-        const nodeIdToHandleMap = new Map();
-        const usedHandles = new Set();
+        const readableGraph = {
+            id: graph.id,
+            name: graph.name,
+            pan: { ...graph.pan },
+            zoom: graph.zoom,
+            nodes: [],
+            connections: []
+        };
 
-        // First, generate unique handles for all nodes that will be saved.
-        graph.nodes.forEach(node => {
-            if (node.type !== 'graph-input' && node.type !== 'graph-output') {
-                const handle = this._generateUniqueHandle(node.title, usedHandles);
-                usedHandles.add(handle);
-                nodeIdToHandleMap.set(node.id, handle);
+        readableGraph.nodes = graph.nodes.map(node => {
+            const readableNode = JSON.parse(JSON.stringify(node));
+            readableNode.id = nodeIdToHandleMap.get(node.id);
+
+            if (readableNode.subgraphId) {
+                readableNode.subgraph = this._convertGraphToReadable(readableNode.subgraphId, nodeIdToHandleMap);
+                delete readableNode.subgraphId;
             }
+            return readableNode;
         });
 
-        // Then, build the simplified node objects.
-        for (const node of graph.nodes) {
-            if (node.type === 'graph-input' || node.type === 'graph-output') continue;
+        readableGraph.connections = graph.connections.map(conn => {
+            const startNode = this.findNodeById(conn.start.nodeId, graph.id);
+            const endNode = this.findNodeById(conn.end.nodeId, graph.id);
+            if (!startNode || !endNode) return null;
 
-            const simpleNode = {
-                id: nodeIdToHandleMap.get(node.id),
-                name: node.title,
-                text: node.text
+            return {
+                id: conn.id,
+                from: nodeIdToHandleMap.get(conn.start.nodeId),
+                from_pin: startNode.outputs[conn.start.index]?.name || `output_${conn.start.index}`,
+                to: nodeIdToHandleMap.get(conn.end.nodeId),
+                to_pin: endNode.inputs[conn.end.index]?.name || `input_${conn.end.index}`
             };
+        }).filter(Boolean);
 
-            const outgoingConnections = graph.connections.filter(c => c.start.nodeId === node.id);
-            if (outgoingConnections.length > 0) {
-                simpleNode.branches = {};
-                for (const conn of outgoingConnections) {
-                    const outputPin = node.outputs[conn.start.index];
-                    const targetNodeHandle = nodeIdToHandleMap.get(conn.end.nodeId);
-                    if (outputPin && targetNodeHandle) {
-                        simpleNode.branches[outputPin.name] = targetNodeHandle;
-                    }
-                }
-            }
-
-            if (node.subgraphId) {
-                const logic = this._convertGraphToSimple(node.subgraphId);
-                if (logic.length > 0) {
-                    simpleNode.logic = logic;
-                }
-            }
-
-            story.push(simpleNode);
-        }
-        return story;
+        return readableGraph;
     }
-
+    
     /**
-     * NEW: Loads a graph from a simplified JSON object.
-     * @param {Object} simpleData - The parsed simplified JSON data.
+     * NEW: Loads a graph from the new human-readable format.
      */
-    _loadSimpleGraph(simpleData) {
+    _loadReadableGraph(readableData) {
         this.resetState();
-        const rootGraph = this.getCurrentGraph();
-        rootGraph.name = simpleData.title || 'Loaded Graph';
+        const flatGraphs = {};
+        const handleToNodeIdMap = new Map();
 
-        this._convertSimpleToGraph(simpleData.story, rootGraph);
+        this._convertReadableToState(readableData.graph, flatGraphs, handleToNodeIdMap);
+        
+        this.state.graphs = flatGraphs;
 
+        const rootGraph = this.findGraphById('root');
+        if (rootGraph) {
+            rootGraph.name = readableData.title || 'Loaded Graph';
+        }
+        
         this.render();
     }
 
     /**
-     * UPDATED: Recursively builds the editor's graph state from a simplified nodes array.
-     * Now uses the `id` field for robust connection mapping and auto-layouts the nodes.
-     * @param {Array<Object>} simpleNodesArray - The array of simplified nodes.
-     * @param {Object} targetGraph - The graph object to add the new nodes to.
+     * HELPER: Recursively traverses the readable graph format and flattens it into the editor's state.
      */
-    _convertSimpleToGraph(simpleNodesArray, targetGraph) {
+    _convertReadableToState(readableGraph, flatGraphs, handleToNodeIdMap) {
+        const newGraph = {
+            id: readableGraph.id,
+            name: readableGraph.name,
+            pan: { ...readableGraph.pan },
+            zoom: readableGraph.zoom,
+            nodes: [],
+            connections: []
+        };
+
+        readableGraph.nodes.forEach(readableNode => {
+            const newNode = JSON.parse(JSON.stringify(readableNode));
+            const internalNodeId = `node_${this.state.nodeCounter++}`;
+            handleToNodeIdMap.set(readableNode.id, internalNodeId);
+            newNode.id = internalNodeId;
+
+            if (newNode.subgraph) {
+                const subgraph = newNode.subgraph;
+                newNode.subgraphId = subgraph.id;
+                this._convertReadableToState(subgraph, flatGraphs, handleToNodeIdMap);
+                delete newNode.subgraph;
+            }
+            newGraph.nodes.push(newNode);
+        });
+
+        readableGraph.connections.forEach(readableConn => {
+            const startNodeId = handleToNodeIdMap.get(readableConn.from);
+            const endNodeId = handleToNodeIdMap.get(readableConn.to);
+            const startNode = newGraph.nodes.find(n => n.id === startNodeId);
+            const endNode = newGraph.nodes.find(n => n.id === endNodeId);
+
+            if (startNode && endNode) {
+                const startIndex = startNode.outputs.findIndex(o => o.name === readableConn.from_pin);
+                const endIndex = endNode.inputs.findIndex(i => i.name === readableConn.to_pin);
+                
+                if (startIndex !== -1 && endIndex !== -1) {
+                    newGraph.connections.push({
+                        id: readableConn.id || `conn_${Date.now()}_${Math.random()}`,
+                        start: { nodeId: startNodeId, index: startIndex },
+                        end: { nodeId: endNodeId, index: endIndex }
+                    });
+                }
+            }
+        });
+        
+        flatGraphs[newGraph.id] = newGraph;
+    }
+
+    // ----- LEGACY & UTILITY METHODS -----
+    
+    /**
+     * RETAINED for backward compatibility: Loads a graph from the legacy simplified JSON object.
+     */
+    _loadLegacySimpleGraph(simpleData) {
+        this.resetState();
+        const rootGraph = this.getCurrentGraph();
+        rootGraph.name = simpleData.title || 'Loaded Graph';
+        this._convertLegacySimpleToGraph(simpleData.story, rootGraph);
+        this.render();
+    }
+
+    /**
+     * RETAINED for backward compatibility: The original conversion logic for the legacy format.
+     */
+    _convertLegacySimpleToGraph(simpleNodesArray, targetGraph) {
         const simpleIdToNodeIdMap = new Map();
         const usedSimpleIds = new Set();
 
-        // First Pass: Pre-process nodes to ensure they have a usable, unique ID for this session.
         simpleNodesArray.forEach(simpleNode => {
             let runtimeId = simpleNode.id;
             if (!runtimeId || usedSimpleIds.has(runtimeId)) {
                 runtimeId = this._generateUniqueHandle(simpleNode.name, usedSimpleIds);
             }
             usedSimpleIds.add(runtimeId);
-            simpleNode._runtimeId = runtimeId; // Attach temporary, guaranteed-unique ID
+            simpleNode._runtimeId = runtimeId;
         });
         
         const layout = { x: 50, y: 50, columnWidth: NODE_MIN_WIDTH + 80, rowHeight: NODE_MIN_HEIGHT + 60, maxCols: 4 };
         let col = 0, row = 0;
 
-        // Second Pass: Create all nodes in the editor.
         simpleNodesArray.forEach(simpleNode => {
             const editorNodeId = `node_${this.state.nodeCounter++}`;
             simpleIdToNodeIdMap.set(simpleNode._runtimeId, editorNodeId);
@@ -956,15 +1011,11 @@ class NodeEditor {
             };
 
             col++;
-            if (col >= layout.maxCols) {
-                col = 0;
-                row++;
-            }
+            if (col >= layout.maxCols) { col = 0; row++; }
 
             if (simpleNode.branches) {
                 nodeData.outputs = Object.keys(simpleNode.branches).map(branchName => ({
-                    name: branchName,
-                    color: COLORS.default
+                    name: branchName, color: COLORS.default
                 }));
             }
 
@@ -972,23 +1023,18 @@ class NodeEditor {
                 const subgraphId = `graph_${editorNodeId}`;
                 nodeData.subgraphId = subgraphId;
                 const subgraph = {
-                    id: subgraphId,
-                    name: simpleNode.name,
-                    nodes: [], connections: [],
+                    id: subgraphId, name: simpleNode.name, nodes: [], connections: [],
                     pan: { x: 0, y: 0 }, zoom: 1
                 };
                 this.state.graphs[subgraphId] = subgraph;
-                this._convertSimpleToGraph(simpleNode.logic, subgraph);
+                this._convertLegacySimpleToGraph(simpleNode.logic, subgraph);
             }
-
             targetGraph.nodes.push(nodeData);
         });
 
-        // Third Pass: Create all connections now that nodes are created.
         simpleNodesArray.forEach(simpleNode => {
             const startNodeId = simpleIdToNodeIdMap.get(simpleNode._runtimeId);
             if (!startNodeId || !simpleNode.branches) return;
-
             const startNodeData = this.findNodeById(startNodeId, targetGraph.id);
 
             for (const [branchName, targetSimpleId] of Object.entries(simpleNode.branches)) {
@@ -999,7 +1045,7 @@ class NodeEditor {
                     const connection = {
                         id: `conn_${Date.now()}_${Math.random()}`,
                         start: { nodeId: startNodeId, index: outputIndex },
-                        end: { nodeId: endNodeId, index: 0 } // Connect to the default first input
+                        end: { nodeId: endNodeId, index: 0 }
                     };
                     targetGraph.connections.push(connection);
                 }
@@ -1007,8 +1053,26 @@ class NodeEditor {
         });
     }
 
-    // ----- END OF NEW AND UPDATED METHODS -----
+    /**
+     * RETAINED: Helper to generate a unique, URL-friendly handle from a string.
+     */
+    _generateUniqueHandle(baseName, existingHandles) {
+        let handle = (baseName || 'unnamed-node').toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9\s-]/g, '')
+            .replace(/\s+/g, '-');
+        if (!handle) { handle = 'unnamed-node'; }
 
+        let finalHandle = handle;
+        let counter = 1;
+        while (existingHandles.has(finalHandle)) {
+            counter++;
+            finalHandle = `${handle}-${counter}`;
+        }
+        return finalHandle;
+    }
+
+    // ----- EVENT HANDLERS & INTERACTIONS -----
 
     _onCanvasContentInput(e) {
         if (e.target.classList.contains('node-text')) {
@@ -1021,9 +1085,7 @@ class NodeEditor {
 
     _onCanvasMouseDown(e) {
         this.interaction.didDrag = false;
-
         const target = e.target;
-
         if (target.classList.contains('node-header') || target.classList.contains('node-content') || target.classList.contains('node-text')) {
             this._startNodeDrag(e, target.closest('.node').dataset.nodeId);
         } else if (target.classList.contains('resize-handle')) {
@@ -1294,7 +1356,9 @@ class NodeEditor {
         const mousePos = this.getCanvasCoordinates(e.clientX, e.clientY);
 
         if (!this.state.selectedNodeIds.has(nodeId)) {
-            this.state.selectedNodeIds.clear();
+            if (!e.ctrlKey && !e.shiftKey) {
+                this.state.selectedNodeIds.clear();
+            }
             this.state.selectedNodeIds.add(nodeId);
             this.render();
         }
@@ -1368,6 +1432,7 @@ class NodeEditor {
         const outputData = startPointData.type === 'output' ? startPointData : endPointData;
         const inputData = startPointData.type === 'input' ? startPointData : endPointData;
 
+        // Prevent duplicate connections
         const exists = graph.connections.some(c =>
             c.start.nodeId === outputData.nodeId &&
             c.start.index === parseInt(outputData.index) &&
