@@ -49,6 +49,7 @@ class NodeEditor {
             isPanning: false,
             isConnecting: false,
             isSelecting: false,
+            didDrag: false, // --- ADDED: Flag to distinguish a drag from a click
             draggedNodes: [],
             resizeNode: null,
             connectionStartPoint: null,
@@ -669,7 +670,7 @@ class NodeEditor {
      * Selects nodes that fall within a given rectangular area.
      * @param {object} box - The selection box with {left, top, right, bottom}.
      */
-	selectNodesInBox(box) {
+    selectNodesInBox(box) {
         const graph = this.getCurrentGraph();
         graph.nodes.forEach(node => {
             const nodeRect = {
@@ -900,6 +901,9 @@ class NodeEditor {
     }
     
     _onCanvasMouseDown(e) {
+        // --- ADDED: Reset didDrag flag on new mouse press
+        this.interaction.didDrag = false;
+        
         const target = e.target;
         
         // Delegate based on the target element
@@ -919,6 +923,11 @@ class NodeEditor {
     }
     
     _onMouseMove(e) {
+        // --- ADDED: Set didDrag flag if a drag operation is active.
+        if (this.interaction.isDragging || this.interaction.isSelecting || this.interaction.isPanning) {
+            this.interaction.didDrag = true;
+        }
+
         const graph = this.getCurrentGraph();
         const mousePos = this.getCanvasCoordinates(e.clientX, e.clientY);
         
@@ -1028,18 +1037,25 @@ class NodeEditor {
     }
     
     _onGlobalClick(e) {
+        // --- MODIFIED: This is the core of the fix. ---
+        // If the 'click' was the end of a drag, ignore it for selection purposes.
+        // The drag's logic was already handled in onMouseUp.
+        if (this.interaction.didDrag) {
+            return;
+        }
+
         const target = e.target;
         
         // Hide context menus if clicking outside
         if (!this.contextMenu.contains(target)) this.contextMenu.style.display = 'none';
         if (!this.connectionContextMenu.contains(target)) this.connectionContextMenu.style.display = 'none';
         
-        // Clear selection if clicking on the background
+        // Clear selection if clicking on the background (now only for true clicks)
         if (target === this.canvas || target === this.canvasContent) {
              this.clearSelection();
         }
         
-        // Handle node selection
+        // Handle node selection (now only for true clicks)
         const nodeEl = target.closest('.node');
         if (nodeEl && !target.classList.contains('node-text')) { // Prevent selection change when clicking textarea
             const nodeId = nodeEl.dataset.nodeId;
