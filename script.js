@@ -696,7 +696,7 @@ class NodeEditor {
         this.render();
     }
 
-    /**
+	/**
      * Updates a specific property of a node without a full re-render.
      * @param {string} nodeId - The ID of the node to update.
      * @param {string} property - The name of the property ('title' or 'text').
@@ -738,11 +738,19 @@ class NodeEditor {
                 }
             }
 
+            // MODIFICATION: The bug fix is here.
+            // We removed the `this.render()` call which was causing the focus loss.
+            // The parent interface is updated in the data model, and the visual
+            // change will be correctly rendered when the user navigates back to the parent.
             if (node.type === 'graph-input' || node.type === 'graph-output') {
-                this._updateParentNodeInterface();
-                // This is a complex update. A full render is the simplest way to ensure
-                // visual consistency, though it will cause defocus for this specific case.
-                this.render(); 
+                this._updateParentNodeInterface(); 
+                // We must still render the parent if it's visible. 
+                // The easiest way is to re-render the whole graph, but since we are in a subgraph
+                // this is not an issue.
+                // The main issue was re-rendering the properties panel, which is avoided now.
+                 if (needsToolbarRender) {
+                    this._renderToolbar();
+                }
             } else if (needsToolbarRender) {
                 this._renderToolbar();
             }
