@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Refactored Node Editor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="toolbar">
+        <div id="breadcrumbs"></div>
+        <button id="addNodeBtn">Add Node</button>
+        <button id="saveBtn">Save</button>
+        <button id="loadBtn">Load</button>
+        <input type="file" id="loadFile" accept=".json" style="display: none;">
+        <button id="copyBtn" disabled>Copy</button>
+        <button id="pasteBtn" disabled>Paste</button>
+        <button id="deleteBtn" disabled>Delete</button>
+        <span class="selected-count" id="selectedCount"></span>
+        <span style="color: #888; margin-left: auto;">Double-click node to enter | Right drag: pan | Wheel: zoom</span>
+    </div>
+
+    <div class="canvas" id="canvas">
+        <div class="canvas-content" id="canvasContent">
+            <div class="selection-box" id="selectionBox"></div>
+        </div>
+    </div>
+
+    <div class="properties-panel" id="propertiesPanel">
+        <h3>Node Properties</h3>
+        <div id="propertiesContent">
+            <p>Select a node to edit its properties</p>
+        </div>
+    </div>
+
+    <div class="context-menu" id="contextMenu">
+        <div class="context-menu-item" data-action="add-node">Add Node</div>
+        <div class="context-menu-item" data-action="add-graph-input">Add Graph Input</div>
+        <div class="context-menu-item" data-action="add-graph-output">Add Graph Output</div>
+    </div>
+
+    <div class="context-menu" id="connectionContextMenu">
+        <div class="context-menu-item danger" data-action="delete-connection">Delete Connection</div>
+    </div>
+
+    <div class="info">
+        Zoom: Mouse wheel | Pan: Right drag | Select: Left drag box | Grid snaps to 20px
+    </div>
+
+    <script src="script.js" type="module"></script>
+</body>
+</html>
