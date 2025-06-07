@@ -654,7 +654,7 @@ class NodeEditor {
         this.render();
     }
     
-	saveGraph() {
+    saveGraph() {
         const rootGraph = this.findGraphById('root');
         if (!rootGraph) return;
 
@@ -669,66 +669,14 @@ class NodeEditor {
             }
         }
 
-        const simplifiedOutput = {
-            project: rootGraph.name,
-            graphs: {}
+        const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}.json`;
+
+        const saveData = {
+            version: "1.0.0",
+            graphs: this.state.graphs 
         };
 
-        // Create a map of Node ID -> Node Title for readable connections
-        const nodeIdToTitleMap = new Map();
-        Object.values(this.state.graphs).forEach(graph => {
-            graph.nodes.forEach(node => {
-                nodeIdToTitleMap.set(node.id, node.title);
-            });
-        });
-
-        // Process each graph
-        for (const graphId in this.state.graphs) {
-            const graph = this.state.graphs[graphId];
-            
-            const simplifiedNodes = graph.nodes.map(node => {
-                const simpleNode = {
-                    title: node.title,
-                    text: node.text,
-                    type: node.type,
-                    color: node.color,
-                };
-                if (node.inputs.length > 0) {
-                    simpleNode.inputs = node.inputs.map(i => i.name);
-                }
-                if (node.outputs.length > 0) {
-                    simpleNode.outputs = node.outputs.map(o => o.name);
-                }
-                if (node.subgraphId) {
-                    const subgraph = this.findGraphById(node.subgraphId);
-                    if (subgraph) {
-                        simpleNode.subgraph = subgraph.name;
-                    }
-                }
-                return simpleNode;
-            });
-
-            const simplifiedConnections = graph.connections.map(conn => {
-                const startNode = this.findNodeById(conn.start.nodeId, graphId);
-                const endNode = this.findNodeById(conn.end.nodeId, graphId);
-                if (!startNode || !endNode) return null;
-
-                return {
-                    from: startNode.title,
-                    output: startNode.outputs[conn.start.index]?.name || 'unknown',
-                    to: endNode.title,
-                    input: endNode.inputs[conn.end.index]?.name || 'unknown',
-                };
-            }).filter(Boolean); // Filter out any null connections
-
-            simplifiedOutput.graphs[graph.name] = {
-                nodes: simplifiedNodes,
-                connections: simplifiedConnections
-            };
-        }
-        
-        const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}.json`;
-        const dataStr = JSON.stringify(simplifiedOutput, null, 2); // Pretty-printed JSON
+        const dataStr = JSON.stringify(saveData, null, 2);
         
         const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
         const linkElement = document.createElement('a');
@@ -746,131 +694,34 @@ class NodeEditor {
             try {
                 const loadedData = JSON.parse(e.target.result);
 
-                if (!loadedData.project || !loadedData.graphs) {
-                    throw new Error("Invalid or corrupted simplified file format.");
+                if (!loadedData || !loadedData.graphs) {
+                    throw new Error("Invalid or corrupted file format.");
                 }
 
                 this.resetState();
-                
-                const graphNameMap = new Map(); // Maps readable name to new graph ID
-                let isFirstGraph = true;
 
-                // --- First Pass: Create all graphs and nodes ---
-                for (const graphName in loadedData.graphs) {
-                    const simpleGraph = loadedData.graphs[graphName];
-                    
-                    let graphId;
-                    if (isFirstGraph) {
-                        graphId = 'root';
-                        this.state.graphs.root.name = loadedData.project;
-                        isFirstGraph = false;
-                    } else {
-                        graphId = `graph_temp_${Math.random().toString(36).substr(2, 9)}`;
-                    }
-                    
-                    const newGraph = this.state.graphs[graphId] || { id: graphId, nodes: [], connections: [], pan: { x: 0, y: 0 }, zoom: 1 };
-                    newGraph.name = graphName;
-                    this.state.graphs[graphId] = newGraph;
-                    graphNameMap.set(graphName, graphId);
+                this.state.graphs = loadedData.graphs;
 
-                    // Create nodes
-                    simpleGraph.nodes.forEach(simpleNode => {
-                        const nodeId = `node_${this.state.nodeCounter++}`;
-                        const nodeData = {
-                            id: nodeId,
-                            title: simpleNode.title,
-                            text: simpleNode.text,
-                            type: simpleNode.type,
-                            color: simpleNode.color || 'default',
-                            width: NODE_MIN_WIDTH,
-                            height: NODE_MIN_HEIGHT,
-                            inputs: (simpleNode.inputs || []).map(name => ({ name, color: COLORS[simpleNode.color] || COLORS.default })),
-                            outputs: (simpleNode.outputs || []).map(name => ({ name, color: COLORS[simpleNode.color] || COLORS.default })),
-                            subgraphId: null, // To be linked in the second pass
-                            // Store original name for linking subgraphs
-                            _originalSubgraphName: simpleNode.subgraph 
-                        };
-                        newGraph.nodes.push(nodeData);
-                    });
-                }
-                
-                // --- Second Pass: Link Subgraphs ---
+                let maxId = 0;
                 Object.values(this.state.graphs).forEach(graph => {
                     graph.nodes.forEach(node => {
-                        if (node._originalSubgraphName) {
-                            const subgraphId = graphNameMap.get(node._originalSubgraphName);
-                            if (subgraphId) {
-                                node.subgraphId = subgraphId;
-                                // The graph ID was temporary, so let's make it permanent and predictable
-                                const newSubgraphId = `graph_${node.id}`;
-                                const subgraph = this.state.graphs[subgraphId];
-                                subgraph.id = newSubgraphId;
-                                node.subgraphId = newSubgraphId;
-                                
-                                delete this.state.graphs[subgraphId];
-                                this.state.graphs[newSubgraphId] = subgraph;
-                            }
-                            delete node._originalSubgraphName;
+                        const idNum = parseInt(node.id.split('_')[1], 10);
+                        if (!isNaN(idNum) && idNum > maxId) {
+                            maxId = idNum;
                         }
                     });
                 });
+                this.state.nodeCounter = maxId + 1;
 
-
-                // --- Third Pass: Create connections ---
-                for (const graphName in loadedData.graphs) {
-                    const simpleGraph = loadedData.graphs[graphName];
-                    const graphId = graphNameMap.get(graphName) || Object.values(this.state.graphs).find(g => g.name === graphName)?.id;
-                    if (!graphId) continue;
-                    
-                    const graph = this.state.graphs[graphId];
-                    const nodeTitleMap = new Map(graph.nodes.map(n => [n.title, n]));
-
-                    simpleGraph.connections.forEach(simpleConn => {
-                        const startNode = nodeTitleMap.get(simpleConn.from);
-                        const endNode = nodeTitleMap.get(simpleConn.to);
-
-                        if (startNode && endNode) {
-                            const startIdx = startNode.outputs.findIndex(o => o.name === simpleConn.output);
-                            const endIdx = endNode.inputs.findIndex(i => i.name === simpleConn.input);
-
-                            if (startIdx !== -1 && endIdx !== -1) {
-                                graph.connections.push({
-                                    id: `conn_${Date.now()}_${Math.random()}`,
-                                    start: { nodeId: startNode.id, index: startIdx },
-                                    end: { nodeId: endNode.id, index: endIdx },
-                                });
-                            }
-                        }
-                    });
-                }
-
-                // --- Final Step: Auto-layout and render ---
-                Object.values(this.state.graphs).forEach(graph => {
-                    this._autoLayoutNodes(graph);
-                });
-
-                this.navigateToLevel(0); // Go to root and render
+                this.render();
 
             } catch (error) {
                 alert('Error loading graph: ' + error.message);
-                this.resetState(); // Reset to a clean state on error
-                this.render();
             }
         };
         
         reader.readAsText(file);
         event.target.value = '';
-    }
-    
-    _autoLayoutNodes(graph) {
-        const nodesPerRow = Math.floor(Math.sqrt(graph.nodes.length)) || 1;
-        const PADDING_X = 80;
-        const PADDING_Y = 60;
-
-        graph.nodes.forEach((node, i) => {
-            node.x = (i % nodesPerRow) * (NODE_MIN_WIDTH + PADDING_X);
-            node.y = Math.floor(i / nodesPerRow) * (NODE_MIN_HEIGHT + PADDING_Y);
-        });
     }
     
     copySelectedNodes() {
