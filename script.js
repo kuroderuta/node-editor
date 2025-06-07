@@ -671,11 +671,8 @@ class NodeEditor {
 
         const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}.json`;
 
-        const saveData = {
-            version: "1.0.0",
-            graphs: this.state.graphs 
-        };
-
+        // Create simplified format
+        const saveData = this._createSimplifiedFormat();
         const dataStr = JSON.stringify(saveData, null, 2);
         
         const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
@@ -694,25 +691,11 @@ class NodeEditor {
             try {
                 const loadedData = JSON.parse(e.target.result);
 
-                if (!loadedData || !loadedData.graphs) {
-                    throw new Error("Invalid or corrupted file format.");
+                if (!loadedData.title || !loadedData.story) {
+                    throw new Error("Invalid file format. Expected simplified format with 'title' and 'story' fields.");
                 }
 
-                this.resetState();
-
-                this.state.graphs = loadedData.graphs;
-
-                let maxId = 0;
-                Object.values(this.state.graphs).forEach(graph => {
-                    graph.nodes.forEach(node => {
-                        const idNum = parseInt(node.id.split('_')[1], 10);
-                        if (!isNaN(idNum) && idNum > maxId) {
-                            maxId = idNum;
-                        }
-                    });
-                });
-                this.state.nodeCounter = maxId + 1;
-
+                this._loadFromSimplifiedFormat(loadedData);
                 this.render();
 
             } catch (error) {
@@ -722,6 +705,291 @@ class NodeEditor {
         
         reader.readAsText(file);
         event.target.value = '';
+    }
+    
+    _createSimplifiedFormat() {
+        const rootGraph = this.findGraphById('root');
+        const story = [];
+        
+        // Create a map to track processed nodes and find the starting node
+        const processedNodes = new Set();
+        const nodeMap = new Map(rootGraph.nodes.map(n => [n.id, n]));
+        
+        // Find starting node (node with no incoming connections)
+        const hasIncomingConnection = new Set();
+        rootGraph.connections.forEach(conn => {
+            hasIncomingConnection.add(conn.end.nodeId);
+        });
+        
+        const startingNodes = rootGraph.nodes.filter(n => !hasIncomingConnection.has(n.id));
+        
+        // Process nodes in flow order
+        const processNode = (node) => {
+            if (processedNodes.has(node.id)) return;
+            processedNodes.add(node.id);
+            
+            const storyNode = {
+                name: node.title,
+                text: node.text || ""
+            };
+            
+            // Find outgoing connections
+            const outgoingConnections = rootGraph.connections.filter(c => c.start.nodeId === node.id);
+            
+            if (outgoingConnections.length === 0) {
+                storyNode.next = "END";
+            } else if (outgoingConnections.length === 1) {
+                const targetNode = nodeMap.get(outgoingConnections[0].end.nodeId);
+                storyNode.next = targetNode ? targetNode.title : "END";
+            } else {
+                // Multiple outputs - create branches
+                storyNode.branches = {};
+                outgoingConnections.forEach(conn => {
+                    const targetNode = nodeMap.get(conn.end.nodeId);
+                    const outputName = node.outputs[conn.start.index]?.name || `Option ${conn.start.index + 1}`;
+                    storyNode.branches[outputName.toLowerCase()] = targetNode ? targetNode.title : "END";
+                });
+            }
+            
+            // Add internal logic if this node has a subgraph
+            if (node.subgraphId) {
+                const subgraph = this.findGraphById(node.subgraphId);
+                if (subgraph && subgraph.nodes.length > 0) {
+                    storyNode.logic = this._getSubgraphLogic(subgraph);
+                }
+            }
+            
+            story.push(storyNode);
+        };
+        
+        // Process starting nodes first, then follow connections
+        startingNodes.forEach(processNode);
+        
+        // Process remaining nodes that might be disconnected
+        rootGraph.nodes.forEach(node => {
+            if (!processedNodes.has(node.id)) {
+                processNode(node);
+            }
+        });
+        
+        return {
+            title: rootGraph.name,
+            story: story
+        };
+    }
+    
+    _getSubgraphLogic(subgraph) {
+        const logic = [];
+        const nodeMap = new Map(subgraph.nodes.map(n => [n.id, n]));
+        
+        // Find input nodes
+        const inputNodes = subgraph.nodes.filter(n => n.type === 'graph-input');
+        const outputNodes = subgraph.nodes.filter(n => n.type === 'graph-output');
+        
+        // Simple logic extraction - just list the flow
+        const processedNodes = new Set();
+        
+        const processLogicNode = (node) => {
+            if (processedNodes.has(node.id) || node.type === 'graph-output') return;
+            processedNodes.add(node.id);
+            
+            const logicStep = {
+                step: node.title
+            };
+            
+            const outgoingConnections = subgraph.connections.filter(c => c.start.nodeId === node.id);
+            if (outgoingConnections.length > 1) {
+                logicStep.outcomes = outgoingConnections.map(conn => {
+                    const outputName = node.outputs[conn.start.index]?.name || `outcome${conn.start.index + 1}`;
+                    return outputName.toLowerCase();
+                });
+            }
+            
+            logic.push(logicStep);
+            
+            // Process connected nodes
+            outgoingConnections.forEach(conn => {
+                const targetNode = nodeMap.get(conn.end.nodeId);
+                if (targetNode && targetNode.type !== 'graph-output') {
+                    processLogicNode(targetNode);
+                }
+            });
+        };
+        
+        inputNodes.forEach(processLogicNode);
+        
+        return logic;
+    }
+    
+    _loadFromSimplifiedFormat(loadedData) {
+        this.resetState();
+        
+        const rootGraph = this.findGraphById('root');
+        rootGraph.name = loadedData.title;
+        
+        const nodeMap = new Map();
+        let yPos = 100;
+        const xSpacing = 400;
+        let currentX = 100;
+        
+        // Create nodes
+        loadedData.story.forEach((storyNode, index) => {
+            const nodeId = `node_${this.state.nodeCounter++}`;
+            
+            const nodeData = {
+                id: nodeId,
+                x: currentX,
+                y: yPos,
+                width: NODE_MIN_WIDTH,
+                height: NODE_MIN_HEIGHT,
+                color: 'default',
+                type: 'default',
+                title: storyNode.name,
+                text: storyNode.text || '',
+                inputs: index === 0 ? [] : [{ name: 'Input', color: COLORS.cyan }],
+                outputs: [],
+                subgraphId: null
+            };
+            
+            // Determine outputs based on next/branches
+            if (storyNode.next && storyNode.next !== "END") {
+                nodeData.outputs.push({ name: 'Next', color: COLORS.default });
+            } else if (storyNode.branches) {
+                Object.keys(storyNode.branches).forEach(branchName => {
+                    nodeData.outputs.push({ 
+                        name: branchName.charAt(0).toUpperCase() + branchName.slice(1), 
+                        color: branchName === 'success' ? COLORS.green : branchName === 'fail' ? COLORS.red : COLORS.default 
+                    });
+                });
+            }
+            
+            // Create subgraph if logic exists
+            if (storyNode.logic && storyNode.logic.length > 0) {
+                const subgraphId = `graph_${nodeId}`;
+                const subgraph = {
+                    id: subgraphId,
+                    name: nodeData.title,
+                    nodes: [],
+                    connections: [],
+                    pan: { x: 0, y: 0 },
+                    zoom: 1
+                };
+                
+                this._createSubgraphFromLogic(subgraph, storyNode.logic, nodeData.inputs, nodeData.outputs);
+                this.state.graphs[subgraphId] = subgraph;
+                nodeData.subgraphId = subgraphId;
+            }
+            
+            nodeMap.set(storyNode.name, nodeData);
+            rootGraph.nodes.push(nodeData);
+            
+            currentX += xSpacing;
+            if (currentX > 1200) {
+                currentX = 100;
+                yPos += 300;
+            }
+        });
+        
+        // Create connections
+        loadedData.story.forEach(storyNode => {
+            const sourceNode = nodeMap.get(storyNode.name);
+            if (!sourceNode) return;
+            
+            if (storyNode.next && storyNode.next !== "END") {
+                const targetNode = nodeMap.get(storyNode.next);
+                if (targetNode) {
+                    rootGraph.connections.push({
+                        id: `conn_${Date.now()}_${Math.random()}`,
+                        start: { nodeId: sourceNode.id, index: 0 },
+                        end: { nodeId: targetNode.id, index: 0 }
+                    });
+                }
+            } else if (storyNode.branches) {
+                let outputIndex = 0;
+                Object.values(storyNode.branches).forEach(targetName => {
+                    if (targetName !== "END") {
+                        const targetNode = nodeMap.get(targetName);
+                        if (targetNode) {
+                            rootGraph.connections.push({
+                                id: `conn_${Date.now()}_${Math.random()}_${outputIndex}`,
+                                start: { nodeId: sourceNode.id, index: outputIndex },
+                                end: { nodeId: targetNode.id, index: 0 }
+                            });
+                        }
+                    }
+                    outputIndex++;
+                });
+            }
+        });
+    }
+    
+    _createSubgraphFromLogic(subgraph, logic, parentInputs, parentOutputs) {
+        let xPos = 200;
+        const ySpacing = 200;
+        let yPos = 200;
+        
+        // Create input nodes
+        parentInputs.forEach((input, index) => {
+            const inputNode = {
+                id: `input_${this.state.nodeCounter++}`,
+                x: xPos,
+                y: yPos + (index * ySpacing),
+                width: NODE_MIN_WIDTH,
+                height: NODE_MIN_HEIGHT,
+                color: 'cyan',
+                type: 'graph-input',
+                title: 'Input',
+                text: '',
+                inputs: [],
+                outputs: [{ name: 'Value', color: input.color }],
+                subgraphId: null
+            };
+            subgraph.nodes.push(inputNode);
+        });
+        
+        xPos += 400;
+        
+        // Create logic nodes
+        logic.forEach((logicStep, index) => {
+            const logicNode = {
+                id: `logic_${this.state.nodeCounter++}`,
+                x: xPos,
+                y: yPos + (index * ySpacing),
+                width: NODE_MIN_WIDTH,
+                height: NODE_MIN_HEIGHT,
+                color: 'default',
+                type: 'default',
+                title: logicStep.step,
+                text: '',
+                inputs: [{ name: 'Input', color: COLORS.default }],
+                outputs: logicStep.outcomes ? 
+                    logicStep.outcomes.map(outcome => ({ name: outcome, color: COLORS.default })) :
+                    [{ name: 'Output', color: COLORS.default }],
+                subgraphId: null
+            };
+            subgraph.nodes.push(logicNode);
+        });
+        
+        xPos += 400;
+        
+        // Create output nodes
+        parentOutputs.forEach((output, index) => {
+            const outputNode = {
+                id: `output_${this.state.nodeCounter++}`,
+                x: xPos,
+                y: yPos + (index * ySpacing),
+                width: NODE_MIN_WIDTH,
+                height: NODE_MIN_HEIGHT,
+                color: 'orange',
+                type: 'graph-output',
+                title: output.name,
+                text: '',
+                inputs: [{ name: 'Value', color: output.color }],
+                outputs: [],
+                subgraphId: null
+            };
+            subgraph.nodes.push(outputNode);
+        });
     }
     
     copySelectedNodes() {
