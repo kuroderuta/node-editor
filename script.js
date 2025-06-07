@@ -374,19 +374,47 @@ class NodeEditor {
         this.state.navigationStack.forEach((graphId, index) => {
             const graph = this.findGraphById(graphId);
             if (!graph) return;
+            
+            const isLast = index === this.state.navigationStack.length - 1;
 
-            const item = document.createElement('span');
-            item.textContent = graph.name;
-            item.className = 'breadcrumb-item';
+            // MODIFICATION START: Make root project name editable
+            if (graphId === 'root' && isLast) {
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'breadcrumb-input';
+                input.value = graph.name;
 
-            if (index === this.state.navigationStack.length - 1) {
-                item.classList.add('active');
-            } else {
-                item.onclick = () => this.navigateToLevel(index);
+                input.oninput = (e) => {
+                    const rootGraph = this.findGraphById('root');
+                    if (rootGraph) {
+                        rootGraph.name = e.target.value;
+                    }
+                };
+
+                input.onchange = (e) => { // Revert if name is empty on blur
+                    const rootGraph = this.findGraphById('root');
+                    if (rootGraph && rootGraph.name.trim() === '') {
+                        rootGraph.name = 'Root';
+                        e.target.value = 'Root';
+                    }
+                };
+                breadcrumbsContainer.appendChild(input);
+
+            } else { // Original logic for non-editable breadcrumbs
+                const item = document.createElement('span');
+                item.textContent = graph.name;
+                item.className = 'breadcrumb-item';
+                
+                if (isLast) {
+                    item.classList.add('active');
+                } else {
+                    item.onclick = () => this.navigateToLevel(index);
+                }
+                breadcrumbsContainer.appendChild(item);
             }
-            breadcrumbsContainer.appendChild(item);
+            // MODIFICATION END
 
-            if (index < this.state.navigationStack.length - 1) {
+            if (!isLast) {
                 const separator = document.createElement('span');
                 separator.className = 'breadcrumb-separator';
                 separator.textContent = '>';
@@ -416,7 +444,6 @@ class NodeEditor {
             
             const isIoNode = nodeData.type === 'graph-input' || nodeData.type === 'graph-output';
             
-            // MODIFICATION: Conditionally show the Text Content section.
             const textContentHTML = !isIoNode ? `
                 <div class="property-group">
                     <label>Text Content:</label>
@@ -737,17 +764,9 @@ class NodeEditor {
                     }
                 }
             }
-
-            // MODIFICATION: The bug fix is here.
-            // We removed the `this.render()` call which was causing the focus loss.
-            // The parent interface is updated in the data model, and the visual
-            // change will be correctly rendered when the user navigates back to the parent.
+            
             if (node.type === 'graph-input' || node.type === 'graph-output') {
                 this._updateParentNodeInterface(); 
-                // We must still render the parent if it's visible. 
-                // The easiest way is to re-render the whole graph, but since we are in a subgraph
-                // this is not an issue.
-                // The main issue was re-rendering the properties panel, which is avoided now.
                  if (needsToolbarRender) {
                     this._renderToolbar();
                 }
@@ -826,7 +845,25 @@ class NodeEditor {
     // =================================================================
 
     saveGraph() {
-        // We only need to save the state, as it contains everything.
+        // MODIFICATION START: Prompt for project name if it's the default
+        const rootGraph = this.findGraphById('root');
+        if (!rootGraph) return;
+
+        if (rootGraph.name === 'Root' || rootGraph.name.trim() === '') {
+            const newName = prompt("Please enter a project name before saving:", "My Project");
+            if (newName && newName.trim() !== '') {
+                rootGraph.name = newName.trim();
+                this._renderToolbar(); // Update UI to show the new name
+            } else {
+                alert("Save cancelled. A valid project name is required.");
+                return; // Abort saving if user cancels or enters empty name
+            }
+        }
+
+        // Sanitize the project name to create a valid filename
+        const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}.json`;
+        // MODIFICATION END
+
         const dataStr = JSON.stringify(this.state, (key, value) => {
             if (value instanceof Set) {
                 return Array.from(value); // Convert Sets to Arrays for JSON
@@ -837,7 +874,7 @@ class NodeEditor {
         const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
         const linkElement = document.createElement('a');
         linkElement.setAttribute('href', dataUri);
-        linkElement.setAttribute('download', 'refactored_graph.json');
+        linkElement.setAttribute('download', fileName); // Use the new dynamic filename
         linkElement.click();
     }
 
