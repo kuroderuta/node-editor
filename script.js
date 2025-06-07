@@ -4,7 +4,7 @@ const NODE_MIN_HEIGHT = 128;
 const CONNECTION_POINT_Y_OFFSET = 32;
 const CONNECTION_POINT_Y_SPACING = 32;
 const ZOOM_SENSITIVITY = 0.1;
-const MAX_ZOOM = 4; 
+const MAX_ZOOM = 4;
 const MIN_ZOOM = 0.25;
 
 const COLORS = {
@@ -27,7 +27,7 @@ class NodeEditor {
         this.propertiesContent = document.getElementById('propertiesContent');
         this.contextMenu = document.getElementById('contextMenu');
         this.connectionContextMenu = document.getElementById('connectionContextMenu');
-        
+
         this.state = this.getInitialState();
 
         this.interaction = {
@@ -36,7 +36,7 @@ class NodeEditor {
             isPanning: false,
             isConnecting: false,
             isSelecting: false,
-            didDrag: false, 
+            didDrag: false,
             draggedNodes: [],
             resizeNode: null,
             connectionStartPoint: null,
@@ -44,7 +44,7 @@ class NodeEditor {
             selectionStart: { x: 0, y: 0 },
             lastMousePosition: { x: 0, y: 0 },
         };
-        
+
         this.initialize();
     }
 
@@ -63,7 +63,7 @@ class NodeEditor {
             pan: { x: 0, y: 0 },
             zoom: 1
         };
-        
+
         return {
             graphs: { 'root': masterGraph },
             navigationStack: ['root'],
@@ -74,16 +74,16 @@ class NodeEditor {
             selectedConnectionId: null,
         };
     }
-    
+
     resetState() {
         this.state = this.getInitialState();
     }
-    
+
     _bindEventListeners() {
         this.canvas.addEventListener('mousedown', this._onCanvasMouseDown.bind(this));
         this.canvas.addEventListener('wheel', this._onCanvasWheel.bind(this));
         this.canvas.addEventListener('contextmenu', this._onCanvasContextMenu.bind(this));
-        
+
         this.canvasContent.addEventListener('input', this._onCanvasContentInput.bind(this));
 
         document.addEventListener('mousemove', this._onMouseMove.bind(this));
@@ -98,7 +98,7 @@ class NodeEditor {
         document.getElementById('copyBtn').addEventListener('click', () => this.copySelectedNodes());
         document.getElementById('pasteBtn').addEventListener('click', () => this.pasteNodes());
         document.getElementById('deleteBtn').addEventListener('click', () => this.deleteSelected());
-        
+
         this.contextMenu.addEventListener('click', this._onContextMenuClick.bind(this));
         this.connectionContextMenu.addEventListener('click', this._onContextMenuClick.bind(this));
     }
@@ -107,12 +107,12 @@ class NodeEditor {
         const currentGraphId = this.state.navigationStack[this.state.navigationStack.length - 1];
         return this.state.graphs[currentGraphId];
     }
-    
+
     findNodeById(nodeId, graphId = null) {
         const graph = graphId ? this.state.graphs[graphId] : this.getCurrentGraph();
         return graph ? graph.nodes.find(n => n.id === nodeId) : undefined;
     }
-    
+
     findGraphById(graphId) {
         return this.state.graphs[graphId];
     }
@@ -122,22 +122,22 @@ class NodeEditor {
         this._renderToolbar();
         this._renderPropertiesPanel();
     }
-    
+
     _renderCanvas() {
         const graph = this.getCurrentGraph();
-        
+
         const textScrolls = {};
         this.canvasContent.querySelectorAll('.node-text').forEach(ta => {
             const nodeId = ta.closest('.node').dataset.nodeId;
             textScrolls[nodeId] = { top: ta.scrollTop, left: ta.scrollLeft };
         });
-        
+
         this.canvasContent.innerHTML = '<div class="selection-box" id="selectionBox"></div>';
         this.selectionBox = document.getElementById('selectionBox');
 
         const transform = `translate(${graph.pan.x}px, ${graph.pan.y}px) scale(${graph.zoom})`;
         this.canvasContent.style.transform = transform;
-        
+
         const gridSize = GRID_SIZE * graph.zoom;
         this.canvas.style.backgroundSize = `${gridSize}px ${gridSize}px`;
         this.canvas.style.backgroundPosition = `${graph.pan.x % gridSize}px ${graph.pan.y % gridSize}px`;
@@ -153,8 +153,8 @@ class NodeEditor {
             }
         });
     }
-    
-	_renderNode(nodeData) {
+
+    _renderNode(nodeData) {
         const nodeEl = document.createElement('div');
         const isSelected = this.state.selectedNodeIds.has(nodeData.id);
         const hasSubgraph = nodeData.subgraphId && this.findGraphById(nodeData.subgraphId)?.nodes.length > 0;
@@ -166,25 +166,25 @@ class NodeEditor {
         nodeEl.style.width = `${nodeData.width}px`;
         nodeEl.style.height = `${nodeData.height}px`;
 
-		let textContentHTML = '';
-		if (nodeData.type === 'default') {
-			textContentHTML = `<textarea class="node-text" placeholder="Enter text...">${nodeData.text}</textarea>`;
-		}
-		
+        let textContentHTML = '';
+        if (nodeData.type === 'default') {
+            textContentHTML = `<textarea class="node-text" placeholder="Enter text...">${nodeData.text}</textarea>`;
+        }
+
         let innerHTML = `
             <div class="node-header">${nodeData.title}</div>
             <div class="node-content">
                 ${textContentHTML}
             </div>
         `;
-        
+
         if (nodeData.type === 'default') {
             innerHTML += `<div class="resize-handle" data-node-id="${nodeData.id}"></div>`;
         }
 
         nodeEl.innerHTML = innerHTML;
         this.canvasContent.appendChild(nodeEl);
-        
+
         this._renderNodeConnectionPoints(nodeEl, nodeData);
     }
 
@@ -203,7 +203,7 @@ class NodeEditor {
             label.className = 'connection-point-label';
             label.textContent = pointData.name;
             label.style.top = `${yPos}px`;
-            
+
             nodeEl.appendChild(point);
             nodeEl.appendChild(label);
         };
@@ -215,13 +215,13 @@ class NodeEditor {
         const contentMinHeight = (maxIO > 0) ? (maxIO * CONNECTION_POINT_Y_SPACING + 16) : 0;
         nodeEl.querySelector('.node-content').style.minHeight = `${contentMinHeight}px`;
     }
-    
+
     _renderConnection(connData) {
         const startNode = this.findNodeById(connData.start.nodeId);
         const endNode = this.findNodeById(connData.end.nodeId);
 
         if (!startNode || !endNode) return;
-        
+
         const startNodeEl = this.canvasContent.querySelector(`[data-node-id="${startNode.id}"]`);
         const endNodeEl = this.canvasContent.querySelector(`[data-node-id="${endNode.id}"]`);
 
@@ -233,7 +233,7 @@ class NodeEditor {
         const line = document.createElement('div');
         line.className = 'connection-line';
         line.dataset.connectionId = connData.id;
-        
+
         const svgNS = "http://www.w3.org/2000/svg";
         const svg = document.createElementNS(svgNS, 'svg');
         const defs = document.createElementNS(svgNS, 'defs');
@@ -261,15 +261,15 @@ class NodeEditor {
         svg.appendChild(path);
         line.appendChild(svg);
         this.canvasContent.appendChild(line);
-        
+
         this.updateConnectionPath(connData.id);
     }
-    
+
     _renderToolbar() {
         document.getElementById('copyBtn').disabled = this.state.selectedNodeIds.size === 0;
         document.getElementById('pasteBtn').disabled = this.state.copiedNodes.length === 0;
         document.getElementById('deleteBtn').disabled = this.state.selectedNodeIds.size === 0;
-        
+
         const count = this.state.selectedNodeIds.size;
         const countEl = document.getElementById('selectedCount');
         countEl.textContent = count > 0 ? `${count} node${count > 1 ? 's' : ''} selected` : '';
@@ -279,7 +279,7 @@ class NodeEditor {
         this.state.navigationStack.forEach((graphId, index) => {
             const graph = this.findGraphById(graphId);
             if (!graph) return;
-            
+
             const isLast = index === this.state.navigationStack.length - 1;
 
             if (graphId === 'root' && isLast) {
@@ -308,7 +308,7 @@ class NodeEditor {
                 const item = document.createElement('span');
                 item.textContent = graph.name;
                 item.className = 'breadcrumb-item';
-                
+
                 if (isLast) {
                     item.classList.add('active');
                 } else {
@@ -326,7 +326,7 @@ class NodeEditor {
         });
     }
 
-	_renderPropertiesPanel() {
+    _renderPropertiesPanel() {
         if (this.state.selectedNodeIds.size === 0) {
             this.propertiesPanel.classList.remove('show');
             return;
@@ -341,9 +341,9 @@ class NodeEditor {
             const nodeId = this.state.selectedNodeIds.values().next().value;
             const nodeData = this.findNodeById(nodeId);
             if (!nodeData) return;
-            
+
             const isIoNode = nodeData.type === 'graph-input' || nodeData.type === 'graph-output';
-            
+
             const textContentHTML = !isIoNode ? `
                 <div class="property-group">
                     <label>Text Content:</label>
@@ -368,9 +368,9 @@ class NodeEditor {
                 </div>
             `;
         }
-        
+
         this.propertiesContent.innerHTML = html;
-        
+
         const titleInput = document.getElementById('propNodeTitle');
         const contentInput = document.getElementById('propNodeContent');
         if (titleInput) {
@@ -380,7 +380,7 @@ class NodeEditor {
             contentInput.addEventListener('input', (e) => this.updateNodeProperty(e.target.dataset.nodeId, 'text', e.target.value, e.target));
         }
     }
-    
+
     updateConnectionPath(connectionId) {
         const graph = this.getCurrentGraph();
         const connection = graph.connections.find(c => c.id === connectionId);
@@ -396,14 +396,14 @@ class NodeEditor {
             line.remove();
             return;
         }
-        
+
         const startNodeData = this.findNodeById(connection.start.nodeId);
 
         const startX = startNodeData.x + startNodeEl.offsetWidth;
         const startY = startNodeData.y + CONNECTION_POINT_Y_OFFSET + (connection.start.index * CONNECTION_POINT_Y_SPACING) + 8;
         const endX = this.findNodeById(connection.end.nodeId).x;
         const endY = this.findNodeById(connection.end.nodeId).y + CONNECTION_POINT_Y_OFFSET + (connection.end.index * CONNECTION_POINT_Y_SPACING) + 8;
-        
+
         const path = line.querySelector('path');
         const controlOffset = Math.abs(endX - startX) * 0.5;
         const pathData = `M ${startX} ${startY} C ${startX + controlOffset} ${startY} ${endX - controlOffset} ${endY} ${endX} ${endY}`;
@@ -417,12 +417,12 @@ class NodeEditor {
             gradient.setAttribute('y2', endY);
         }
     }
-    
+
     updateAllConnectionPaths() {
         const graph = this.getCurrentGraph();
         graph.connections.forEach(conn => this.updateConnectionPath(conn.id));
     }
-    
+
     getCanvasCoordinates(clientX, clientY) {
         const graph = this.getCurrentGraph();
         const canvasRect = this.canvas.getBoundingClientRect();
@@ -434,14 +434,14 @@ class NodeEditor {
     snapToGrid(value) {
         return Math.round(value / GRID_SIZE) * GRID_SIZE;
     }
-    
+
     _updateParentNodeInterface() {
         if (this.state.navigationStack.length <= 1) return;
-        
+
         const currentGraphId = this.state.navigationStack[this.state.navigationStack.length - 1];
         const parentGraphId = this.state.navigationStack[this.state.navigationStack.length - 2];
         const parentGraph = this.findGraphById(parentGraphId);
-        
+
         const parentNodeData = parentGraph.nodes.find(n => n.subgraphId === currentGraphId);
         if (!parentNodeData) return;
 
@@ -461,12 +461,12 @@ class NodeEditor {
 
     addNode(type = 'default', position = null) {
         const graph = this.getCurrentGraph();
-        
+
         if (!position) {
             const center = this.getCanvasCoordinates(this.canvas.clientWidth / 2, this.canvas.clientHeight / 2);
             position = { x: center.x, y: center.y };
         }
-        
+
         const nodeId = `node_${this.state.nodeCounter++}`;
         const nodeData = {
             id: nodeId,
@@ -496,26 +496,26 @@ class NodeEditor {
                 this.state.graphs[subgraph.id] = subgraph;
                 nodeData.subgraphId = subgraph.id;
                 break;
-			case 'graph-input':
-				nodeData.title = 'Input';
-				nodeData.color = 'cyan';
-				nodeData.outputs = [{ name: 'Value', color: COLORS.cyan }];
-				break;
-			case 'graph-output':
-				nodeData.title = 'Output';
-				nodeData.color = 'orange';
-				nodeData.inputs = [{ name: 'Value', color: COLORS.orange }];
-				break;
+            case 'graph-input':
+                nodeData.title = 'Input';
+                nodeData.color = 'cyan';
+                nodeData.outputs = [{ name: 'Value', color: COLORS.cyan }];
+                break;
+            case 'graph-output':
+                nodeData.title = 'Output';
+                nodeData.color = 'orange';
+                nodeData.inputs = [{ name: 'Value', color: COLORS.orange }];
+                break;
         }
 
         graph.nodes.push(nodeData);
         if (type !== 'default') {
             this._updateParentNodeInterface();
         }
-        
+
         this.render();
     }
-    
+
     deleteSelected() {
         if (this.state.selectedNodeIds.size === 0) return;
         const graph = this.getCurrentGraph();
@@ -523,8 +523,8 @@ class NodeEditor {
 
         graph.nodes = graph.nodes.filter(node => {
             if (this.state.selectedNodeIds.has(node.id)) {
-                if(node.type !== 'default') ioNodeDeleted = true;
-                if(node.subgraphId) delete this.state.graphs[node.subgraphId];
+                if (node.type !== 'default') ioNodeDeleted = true;
+                if (node.subgraphId) delete this.state.graphs[node.subgraphId];
                 return false;
             }
             return true;
@@ -543,14 +543,14 @@ class NodeEditor {
 
         this.render();
     }
-    
+
     clearSelection() {
         if (this.state.selectedNodeIds.size > 0) {
             this.state.selectedNodeIds.clear();
             this.render();
         }
     }
-    
+
     selectNodesInBox(box) {
         const graph = this.getCurrentGraph();
         graph.nodes.forEach(node => {
@@ -567,7 +567,7 @@ class NodeEditor {
         this.render();
     }
 
-	updateNodeProperty(nodeId, property, value, sourceElement = null) {
+    updateNodeProperty(nodeId, property, value, sourceElement = null) {
         const node = this.findNodeById(nodeId);
         if (!node) return;
 
@@ -594,10 +594,10 @@ class NodeEditor {
                     }
                 }
             }
-            
+
             if (node.type === 'graph-input' || node.type === 'graph-output') {
-                this._updateParentNodeInterface(); 
-                 if (needsToolbarRender) {
+                this._updateParentNodeInterface();
+                if (needsToolbarRender) {
                     this._renderToolbar();
                 }
             } else if (needsToolbarRender) {
@@ -609,7 +609,7 @@ class NodeEditor {
             if (nodeTextarea && nodeTextarea !== sourceElement) {
                 nodeTextarea.value = value;
             }
-            
+
             const propContentTextarea = document.getElementById('propNodeContent');
             if (propContentTextarea && propContentTextarea !== sourceElement) {
                 propContentTextarea.value = value;
@@ -620,16 +620,16 @@ class NodeEditor {
     setNodeColor(nodeId, colorName) {
         const node = this.findNodeById(nodeId);
         if (!node) return;
-        
+
         node.color = colorName;
         const newPinColor = COLORS[colorName] || COLORS.default;
-        
+
         if (node.type === 'graph-input') {
             node.outputs[0].color = newPinColor;
         } else if (node.type === 'graph-output') {
             node.inputs[0].color = newPinColor;
         }
-        
+
         if (node.type !== 'default') {
             this._updateParentNodeInterface();
         }
@@ -637,7 +637,7 @@ class NodeEditor {
         this.render();
         this.updateAllConnectionPaths();
     }
-    
+
     enterNode(nodeId) {
         const node = this.findNodeById(nodeId);
         if (node && node.subgraphId) {
@@ -646,14 +646,140 @@ class NodeEditor {
             this.render();
         }
     }
-    
+
     navigateToLevel(level) {
         if (level >= this.state.navigationStack.length - 1) return;
         this.state.navigationStack = this.state.navigationStack.slice(0, level + 1);
         this.clearSelection();
         this.render();
     }
-    
+
+    /**
+     * Recursively builds a simplified, hierarchical tree of nodes for saving.
+     * @param {string} graphId - The ID of the graph to process.
+     * @returns {Array} An array of simplified node objects.
+     */
+    _buildRecursiveNodeTree(graphId) {
+        const graphData = this.state.graphs[graphId];
+        if (!graphData) return [];
+
+        // 1. Map all nodes to a simplified format
+        const simpleNodes = graphData.nodes.map(nodeData => {
+            const simpleNode = {
+                id: nodeData.id,
+                title: nodeData.title,
+                type: nodeData.type,
+                color: nodeData.color,
+                position: { x: nodeData.x, y: nodeData.y },
+                size: { width: nodeData.width, height: nodeData.height },
+                ...(nodeData.text && { text: nodeData.text }), // Only include text if it exists
+                inputs: nodeData.inputs.map(({ name, color }) => ({ name, color })),
+                outputs: nodeData.outputs.map(({ name, color }) => ({ name, color, connections: [] })),
+            };
+
+            // 2. Recursively build the subgraph for this node
+            if (nodeData.subgraphId) {
+                const subgraphNodes = this._buildRecursiveNodeTree(nodeData.subgraphId);
+                if (subgraphNodes.length > 0) {
+                    simpleNode.nodes = subgraphNodes;
+                }
+            }
+            return simpleNode;
+        });
+
+        // 3. Embed connections into the 'outputs' of the source nodes
+        graphData.connections.forEach(conn => {
+            const sourceNode = simpleNodes.find(n => n.id === conn.start.nodeId);
+            const targetNodeData = this.findNodeById(conn.end.nodeId, graphId);
+
+            if (sourceNode && targetNodeData && sourceNode.outputs[conn.start.index]) {
+                const targetInput = targetNodeData.inputs[conn.end.index];
+                sourceNode.outputs[conn.start.index].connections.push({
+                    to_node: conn.end.nodeId,
+                    to_input: targetInput ? targetInput.name : `input_${conn.end.index}`
+                });
+            }
+        });
+
+        // 4. Clean up empty 'connections' arrays for conciseness
+        simpleNodes.forEach(node => {
+            node.outputs.forEach(output => {
+                if (output.connections.length === 0) {
+                    delete output.connections;
+                }
+            });
+        });
+
+        return simpleNodes;
+    }
+
+    /**
+     * Recursively parses a simplified node tree to reconstruct the editor's internal state.
+     * @param {Array} simpleNodes - An array of simplified node objects.
+     * @param {string} graphId - The ID of the graph these nodes belong to.
+     */
+    _parseRecursiveNodeTree(simpleNodes, graphId) {
+        const graph = this.state.graphs[graphId];
+        if (!graph || !simpleNodes) return;
+        
+        const nodeInputMaps = {}; // Caches input names to their index for each node
+
+        // First pass: create all nodes and subgraphs
+        simpleNodes.forEach(simpleNode => {
+            const nodeData = {
+                id: simpleNode.id,
+                title: simpleNode.title,
+                x: simpleNode.position.x,
+                y: simpleNode.position.y,
+                width: simpleNode.size.width,
+                height: simpleNode.size.height,
+                color: simpleNode.color || 'default',
+                type: simpleNode.type || 'default',
+                text: simpleNode.text || '',
+                inputs: simpleNode.inputs || [],
+                outputs: (simpleNode.outputs || []).map(o => ({ name: o.name, color: o.color })),
+                subgraphId: null,
+            };
+
+            nodeInputMaps[simpleNode.id] = new Map();
+            (nodeData.inputs || []).forEach((input, index) => {
+                nodeInputMaps[simpleNode.id].set(input.name, index);
+            });
+            
+            if (simpleNode.nodes && simpleNode.nodes.length > 0) {
+                const subgraphId = `graph_${simpleNode.id}`;
+                nodeData.subgraphId = subgraphId;
+                
+                this.state.graphs[subgraphId] = { id: subgraphId, name: simpleNode.title, nodes: [], connections: [], pan: { x: 0, y: 0 }, zoom: 1 };
+                
+                this._parseRecursiveNodeTree(simpleNode.nodes, subgraphId);
+            }
+
+            graph.nodes.push(nodeData);
+
+            const idNum = parseInt(simpleNode.id.split('_')[1], 10);
+            if (!isNaN(idNum) && idNum >= this.state.nodeCounter) {
+                this.state.nodeCounter = idNum + 1;
+            }
+        });
+
+        // Second pass: create connections
+        simpleNodes.forEach(simpleNode => {
+            (simpleNode.outputs || []).forEach((output, outputIndex) => {
+                (output.connections || []).forEach(conn => {
+                    const targetInputIndex = nodeInputMaps[conn.to_node]?.get(conn.to_input);
+                    if (targetInputIndex !== undefined) {
+                        graph.connections.push({
+                            id: `conn_${Date.now()}_${Math.random()}`,
+                            start: { nodeId: simpleNode.id, index: outputIndex },
+                            end: { nodeId: conn.to_node, index: targetInputIndex },
+                        });
+                    }
+                });
+            });
+        });
+    }
+
     saveGraph() {
         const rootGraph = this.findGraphById('root');
         if (!rootGraph) return;
@@ -671,9 +797,14 @@ class NodeEditor {
 
         const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}.json`;
 
-        // Create simplified format
-        const saveData = this._createSimplifiedFormat();
-        const dataStr = JSON.stringify(saveData, null, 2);
+        // This is the new, simplified data structure.
+        const simplifiedData = {
+            project: rootGraph.name,
+            version: "2.0.0-human-readable",
+            nodes: this._buildRecursiveNodeTree('root')
+        };
+
+        const dataStr = JSON.stringify(simplifiedData, null, 2); // Using 2 spaces for nice indentation
         
         const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
         const linkElement = document.createElement('a');
@@ -691,13 +822,33 @@ class NodeEditor {
             try {
                 const loadedData = JSON.parse(e.target.result);
 
-                if (!loadedData.title || !loadedData.story) {
-                    throw new Error("Invalid file format. Expected simplified format with 'title' and 'story' fields.");
+                // Check for the new, human-readable format
+                if (loadedData.version === "2.0.0-human-readable" && loadedData.nodes) {
+                    this.resetState(); 
+                    const rootGraph = this.findGraphById('root');
+                    rootGraph.name = loadedData.project || 'Loaded Project';
+
+                    // Start the recursive parsing from the root
+                    this._parseRecursiveNodeTree(loadedData.nodes, 'root');
+                    this.render();
+                } 
+                // Handle the old format for backward compatibility
+                else if (loadedData.version === "1.0.0" && loadedData.graphs) {
+                    this.resetState();
+                    this.state.graphs = loadedData.graphs;
+
+                    let maxId = 0;
+                    Object.values(this.state.graphs).forEach(graph => {
+                        graph.nodes.forEach(node => {
+                            const idNum = parseInt(node.id.split('_')[1], 10);
+                            if (!isNaN(idNum) && idNum > maxId) maxId = idNum;
+                        });
+                    });
+                    this.state.nodeCounter = maxId + 1;
+                    this.render();
+                } else {
+                    throw new Error("Invalid or unsupported file format.");
                 }
-
-                this._loadFromSimplifiedFormat(loadedData);
-                this.render();
-
             } catch (error) {
                 alert('Error loading graph: ' + error.message);
             }
@@ -706,331 +857,46 @@ class NodeEditor {
         reader.readAsText(file);
         event.target.value = '';
     }
-    
-    _createSimplifiedFormat() {
-        const rootGraph = this.findGraphById('root');
-        const story = [];
-        
-        // Create a map to track processed nodes and find the starting node
-        const processedNodes = new Set();
-        const nodeMap = new Map(rootGraph.nodes.map(n => [n.id, n]));
-        
-        // Find starting node (node with no incoming connections)
-        const hasIncomingConnection = new Set();
-        rootGraph.connections.forEach(conn => {
-            hasIncomingConnection.add(conn.end.nodeId);
-        });
-        
-        const startingNodes = rootGraph.nodes.filter(n => !hasIncomingConnection.has(n.id));
-        
-        // Process nodes in flow order
-        const processNode = (node) => {
-            if (processedNodes.has(node.id)) return;
-            processedNodes.add(node.id);
-            
-            const storyNode = {
-                name: node.title,
-                text: node.text || ""
-            };
-            
-            // Find outgoing connections
-            const outgoingConnections = rootGraph.connections.filter(c => c.start.nodeId === node.id);
-            
-            if (outgoingConnections.length === 0) {
-                storyNode.next = "END";
-            } else if (outgoingConnections.length === 1) {
-                const targetNode = nodeMap.get(outgoingConnections[0].end.nodeId);
-                storyNode.next = targetNode ? targetNode.title : "END";
-            } else {
-                // Multiple outputs - create branches
-                storyNode.branches = {};
-                outgoingConnections.forEach(conn => {
-                    const targetNode = nodeMap.get(conn.end.nodeId);
-                    const outputName = node.outputs[conn.start.index]?.name || `Option ${conn.start.index + 1}`;
-                    storyNode.branches[outputName.toLowerCase()] = targetNode ? targetNode.title : "END";
-                });
-            }
-            
-            // Add internal logic if this node has a subgraph
-            if (node.subgraphId) {
-                const subgraph = this.findGraphById(node.subgraphId);
-                if (subgraph && subgraph.nodes.length > 0) {
-                    storyNode.logic = this._getSubgraphLogic(subgraph);
-                }
-            }
-            
-            story.push(storyNode);
-        };
-        
-        // Process starting nodes first, then follow connections
-        startingNodes.forEach(processNode);
-        
-        // Process remaining nodes that might be disconnected
-        rootGraph.nodes.forEach(node => {
-            if (!processedNodes.has(node.id)) {
-                processNode(node);
-            }
-        });
-        
-        return {
-            title: rootGraph.name,
-            story: story
-        };
-    }
-    
-    _getSubgraphLogic(subgraph) {
-        const logic = [];
-        const nodeMap = new Map(subgraph.nodes.map(n => [n.id, n]));
-        
-        // Find input nodes
-        const inputNodes = subgraph.nodes.filter(n => n.type === 'graph-input');
-        const outputNodes = subgraph.nodes.filter(n => n.type === 'graph-output');
-        
-        // Simple logic extraction - just list the flow
-        const processedNodes = new Set();
-        
-        const processLogicNode = (node) => {
-            if (processedNodes.has(node.id) || node.type === 'graph-output') return;
-            processedNodes.add(node.id);
-            
-            const logicStep = {
-                step: node.title
-            };
-            
-            const outgoingConnections = subgraph.connections.filter(c => c.start.nodeId === node.id);
-            if (outgoingConnections.length > 1) {
-                logicStep.outcomes = outgoingConnections.map(conn => {
-                    const outputName = node.outputs[conn.start.index]?.name || `outcome${conn.start.index + 1}`;
-                    return outputName.toLowerCase();
-                });
-            }
-            
-            logic.push(logicStep);
-            
-            // Process connected nodes
-            outgoingConnections.forEach(conn => {
-                const targetNode = nodeMap.get(conn.end.nodeId);
-                if (targetNode && targetNode.type !== 'graph-output') {
-                    processLogicNode(targetNode);
-                }
-            });
-        };
-        
-        inputNodes.forEach(processLogicNode);
-        
-        return logic;
-    }
-    
-    _loadFromSimplifiedFormat(loadedData) {
-        this.resetState();
-        
-        const rootGraph = this.findGraphById('root');
-        rootGraph.name = loadedData.title;
-        
-        const nodeMap = new Map();
-        let yPos = 100;
-        const xSpacing = 400;
-        let currentX = 100;
-        
-        // Create nodes
-        loadedData.story.forEach((storyNode, index) => {
-            const nodeId = `node_${this.state.nodeCounter++}`;
-            
-            const nodeData = {
-                id: nodeId,
-                x: currentX,
-                y: yPos,
-                width: NODE_MIN_WIDTH,
-                height: NODE_MIN_HEIGHT,
-                color: 'default',
-                type: 'default',
-                title: storyNode.name,
-                text: storyNode.text || '',
-                inputs: index === 0 ? [] : [{ name: 'Input', color: COLORS.cyan }],
-                outputs: [],
-                subgraphId: null
-            };
-            
-            // Determine outputs based on next/branches
-            if (storyNode.next && storyNode.next !== "END") {
-                nodeData.outputs.push({ name: 'Next', color: COLORS.default });
-            } else if (storyNode.branches) {
-                Object.keys(storyNode.branches).forEach(branchName => {
-                    nodeData.outputs.push({ 
-                        name: branchName.charAt(0).toUpperCase() + branchName.slice(1), 
-                        color: branchName === 'success' ? COLORS.green : branchName === 'fail' ? COLORS.red : COLORS.default 
-                    });
-                });
-            }
-            
-            // Create subgraph if logic exists
-            if (storyNode.logic && storyNode.logic.length > 0) {
-                const subgraphId = `graph_${nodeId}`;
-                const subgraph = {
-                    id: subgraphId,
-                    name: nodeData.title,
-                    nodes: [],
-                    connections: [],
-                    pan: { x: 0, y: 0 },
-                    zoom: 1
-                };
-                
-                this._createSubgraphFromLogic(subgraph, storyNode.logic, nodeData.inputs, nodeData.outputs);
-                this.state.graphs[subgraphId] = subgraph;
-                nodeData.subgraphId = subgraphId;
-            }
-            
-            nodeMap.set(storyNode.name, nodeData);
-            rootGraph.nodes.push(nodeData);
-            
-            currentX += xSpacing;
-            if (currentX > 1200) {
-                currentX = 100;
-                yPos += 300;
-            }
-        });
-        
-        // Create connections
-        loadedData.story.forEach(storyNode => {
-            const sourceNode = nodeMap.get(storyNode.name);
-            if (!sourceNode) return;
-            
-            if (storyNode.next && storyNode.next !== "END") {
-                const targetNode = nodeMap.get(storyNode.next);
-                if (targetNode) {
-                    rootGraph.connections.push({
-                        id: `conn_${Date.now()}_${Math.random()}`,
-                        start: { nodeId: sourceNode.id, index: 0 },
-                        end: { nodeId: targetNode.id, index: 0 }
-                    });
-                }
-            } else if (storyNode.branches) {
-                let outputIndex = 0;
-                Object.values(storyNode.branches).forEach(targetName => {
-                    if (targetName !== "END") {
-                        const targetNode = nodeMap.get(targetName);
-                        if (targetNode) {
-                            rootGraph.connections.push({
-                                id: `conn_${Date.now()}_${Math.random()}_${outputIndex}`,
-                                start: { nodeId: sourceNode.id, index: outputIndex },
-                                end: { nodeId: targetNode.id, index: 0 }
-                            });
-                        }
-                    }
-                    outputIndex++;
-                });
-            }
-        });
-    }
-    
-    _createSubgraphFromLogic(subgraph, logic, parentInputs, parentOutputs) {
-        let xPos = 200;
-        const ySpacing = 200;
-        let yPos = 200;
-        
-        // Create input nodes
-        parentInputs.forEach((input, index) => {
-            const inputNode = {
-                id: `input_${this.state.nodeCounter++}`,
-                x: xPos,
-                y: yPos + (index * ySpacing),
-                width: NODE_MIN_WIDTH,
-                height: NODE_MIN_HEIGHT,
-                color: 'cyan',
-                type: 'graph-input',
-                title: 'Input',
-                text: '',
-                inputs: [],
-                outputs: [{ name: 'Value', color: input.color }],
-                subgraphId: null
-            };
-            subgraph.nodes.push(inputNode);
-        });
-        
-        xPos += 400;
-        
-        // Create logic nodes
-        logic.forEach((logicStep, index) => {
-            const logicNode = {
-                id: `logic_${this.state.nodeCounter++}`,
-                x: xPos,
-                y: yPos + (index * ySpacing),
-                width: NODE_MIN_WIDTH,
-                height: NODE_MIN_HEIGHT,
-                color: 'default',
-                type: 'default',
-                title: logicStep.step,
-                text: '',
-                inputs: [{ name: 'Input', color: COLORS.default }],
-                outputs: logicStep.outcomes ? 
-                    logicStep.outcomes.map(outcome => ({ name: outcome, color: COLORS.default })) :
-                    [{ name: 'Output', color: COLORS.default }],
-                subgraphId: null
-            };
-            subgraph.nodes.push(logicNode);
-        });
-        
-        xPos += 400;
-        
-        // Create output nodes
-        parentOutputs.forEach((output, index) => {
-            const outputNode = {
-                id: `output_${this.state.nodeCounter++}`,
-                x: xPos,
-                y: yPos + (index * ySpacing),
-                width: NODE_MIN_WIDTH,
-                height: NODE_MIN_HEIGHT,
-                color: 'orange',
-                type: 'graph-output',
-                title: output.name,
-                text: '',
-                inputs: [{ name: 'Value', color: output.color }],
-                outputs: [],
-                subgraphId: null
-            };
-            subgraph.nodes.push(outputNode);
-        });
-    }
-    
+
     copySelectedNodes() {
         if (this.state.selectedNodeIds.size === 0) return;
         const graph = this.getCurrentGraph();
-        
+
         this.state.copiedNodes = graph.nodes
             .filter(node => this.state.selectedNodeIds.has(node.id))
             .map(node => JSON.parse(JSON.stringify(node)));
-            
+
         this._renderToolbar();
     }
-    
-	pasteNodes() {
-		if (this.state.copiedNodes.length === 0) return;
-		const graph = this.getCurrentGraph();
-		this.clearSelection();
 
-		this.state.copiedNodes.forEach(nodeData => {
-			const newNode = JSON.parse(JSON.stringify(nodeData));
-			newNode.id = `node_${this.state.nodeCounter++}`;
-			newNode.x += GRID_SIZE;
-			newNode.y += GRID_SIZE;
-			
-			if (newNode.subgraphId) {
-				const originalSubgraph = this.findGraphById(newNode.subgraphId);
-				if (originalSubgraph) {
-					const newSubgraph = JSON.parse(JSON.stringify(originalSubgraph));
-					newSubgraph.id = `graph_${newNode.id}`;
-					newSubgraph.name = newNode.title;
-					this.state.graphs[newSubgraph.id] = newSubgraph;
-					newNode.subgraphId = newSubgraph.id;
-				}
-			}
-			
-			graph.nodes.push(newNode);
-			this.state.selectedNodeIds.add(newNode.id);
-		});
+    pasteNodes() {
+        if (this.state.copiedNodes.length === 0) return;
+        const graph = this.getCurrentGraph();
+        this.clearSelection();
 
-		this.render();
-	}
+        this.state.copiedNodes.forEach(nodeData => {
+            const newNode = JSON.parse(JSON.stringify(nodeData));
+            newNode.id = `node_${this.state.nodeCounter++}`;
+            newNode.x += GRID_SIZE;
+            newNode.y += GRID_SIZE;
+
+            if (newNode.subgraphId) {
+                const originalSubgraph = this.findGraphById(newNode.subgraphId);
+                if (originalSubgraph) {
+                    const newSubgraph = JSON.parse(JSON.stringify(originalSubgraph));
+                    newSubgraph.id = `graph_${newNode.id}`;
+                    newSubgraph.name = newNode.title;
+                    this.state.graphs[newSubgraph.id] = newSubgraph;
+                    newNode.subgraphId = newSubgraph.id;
+                }
+            }
+
+            graph.nodes.push(newNode);
+            this.state.selectedNodeIds.add(newNode.id);
+        });
+
+        this.render();
+    }
 
     _onCanvasContentInput(e) {
         if (e.target.classList.contains('node-text')) {
@@ -1040,12 +906,12 @@ class NodeEditor {
             }
         }
     }
-    
+
     _onCanvasMouseDown(e) {
         this.interaction.didDrag = false;
-        
+
         const target = e.target;
-        
+
         if (target.classList.contains('node-header') || target.classList.contains('node-content') || target.classList.contains('node-text')) {
             this._startNodeDrag(e, target.closest('.node').dataset.nodeId);
         } else if (target.classList.contains('resize-handle')) {
@@ -1060,7 +926,7 @@ class NodeEditor {
             }
         }
     }
-    
+
     _onMouseMove(e) {
         if (this.interaction.isDragging || this.interaction.isSelecting || this.interaction.isPanning) {
             this.interaction.didDrag = true;
@@ -1068,24 +934,24 @@ class NodeEditor {
 
         const graph = this.getCurrentGraph();
         const mousePos = this.getCanvasCoordinates(e.clientX, e.clientY);
-        
+
         if (this.interaction.isResizing) {
             const dx = (e.clientX - this.interaction.panStart.x) / graph.zoom;
             const dy = (e.clientY - this.interaction.panStart.y) / graph.zoom;
             const node = this.interaction.resizeNode;
-            
+
             const newWidth = this.snapToGrid(Math.max(NODE_MIN_WIDTH, node.startWidth + dx));
             const newHeight = this.snapToGrid(Math.max(NODE_MIN_HEIGHT, node.startHeight + dy));
-            
+
             const nodeData = this.findNodeById(node.id);
             nodeData.width = newWidth;
             nodeData.height = newHeight;
-            
+
             const nodeEl = this.canvasContent.querySelector(`[data-node-id="${node.id}"]`);
             nodeEl.style.width = newWidth + 'px';
             nodeEl.style.height = newHeight + 'px';
             this.updateAllConnectionPaths();
-        } 
+        }
         else if (this.interaction.isDragging) {
             this.interaction.draggedNodes.forEach(dragged => {
                 const nodeData = this.findNodeById(dragged.id);
@@ -1093,7 +959,7 @@ class NodeEditor {
                 const y = this.snapToGrid(mousePos.y - dragged.offsetY);
                 nodeData.x = x;
                 nodeData.y = y;
-                
+
                 const nodeEl = this.canvasContent.querySelector(`[data-node-id="${dragged.id}"]`);
                 nodeEl.style.left = x + 'px';
                 nodeEl.style.top = y + 'px';
@@ -1120,20 +986,20 @@ class NodeEditor {
             this.selectionBox.style.height = `${height}px`;
         }
         else if (this.interaction.isConnecting) {
-             const tempLine = this.canvasContent.querySelector('.connection-line.active');
-             if(!tempLine) return;
-             
-             const startPoint = this.interaction.connectionStartPoint;
-             const startNodeEl = this.canvasContent.querySelector(`[data-node-id="${startPoint.nodeId}"]`);
-             const startNodeData = this.findNodeById(startPoint.nodeId);
-             
-             const startX = startNodeData.x + (startPoint.type === 'output' ? startNodeEl.offsetWidth : 0);
-             const startY = startNodeData.y + CONNECTION_POINT_Y_OFFSET + (parseInt(startPoint.index) * CONNECTION_POINT_Y_SPACING) + 8;
-             
-             const path = tempLine.querySelector('path');
-             const controlOffset = Math.abs(mousePos.x - startX) * 0.5;
-             const pathData = `M ${startX} ${startY} C ${startX + controlOffset} ${startY} ${mousePos.x - controlOffset} ${mousePos.y} ${mousePos.x} ${mousePos.y}`;
-             path.setAttribute('d', pathData);
+            const tempLine = this.canvasContent.querySelector('.connection-line.active');
+            if (!tempLine) return;
+
+            const startPoint = this.interaction.connectionStartPoint;
+            const startNodeEl = this.canvasContent.querySelector(`[data-node-id="${startPoint.nodeId}"]`);
+            const startNodeData = this.findNodeById(startPoint.nodeId);
+
+            const startX = startNodeData.x + (startPoint.type === 'output' ? startNodeEl.offsetWidth : 0);
+            const startY = startNodeData.y + CONNECTION_POINT_Y_OFFSET + (parseInt(startPoint.index) * CONNECTION_POINT_Y_SPACING) + 8;
+
+            const path = tempLine.querySelector('path');
+            const controlOffset = Math.abs(mousePos.x - startX) * 0.5;
+            const pathData = `M ${startX} ${startY} C ${startX + controlOffset} ${startY} ${mousePos.x - controlOffset} ${mousePos.y} ${mousePos.x} ${mousePos.y}`;
+            path.setAttribute('d', pathData);
         }
     }
 
@@ -1151,7 +1017,7 @@ class NodeEditor {
         else if (this.interaction.isSelecting) {
             this.interaction.isSelecting = false;
             this.selectionBox.style.display = 'none';
-            
+
             const box = {
                 left: parseInt(this.selectionBox.style.left),
                 top: parseInt(this.selectionBox.style.top),
@@ -1162,8 +1028,8 @@ class NodeEditor {
         }
         else if (this.interaction.isConnecting) {
             const tempLine = this.canvasContent.querySelector('.connection-line.active');
-            if(tempLine) tempLine.remove();
-            
+            if (tempLine) tempLine.remove();
+
             const endTarget = e.target;
             if (endTarget.classList.contains('connection-point')) {
                 this._finishConnection(this.interaction.connectionStartPoint, endTarget.dataset);
@@ -1172,21 +1038,21 @@ class NodeEditor {
             this.interaction.connectionStartPoint = null;
         }
     }
-    
+
     _onGlobalClick(e) {
         if (this.interaction.didDrag) {
             return;
         }
 
         const target = e.target;
-        
+
         if (!this.contextMenu.contains(target)) this.contextMenu.style.display = 'none';
         if (!this.connectionContextMenu.contains(target)) this.connectionContextMenu.style.display = 'none';
-        
+
         if (target === this.canvas || target === this.canvasContent) {
-             this.clearSelection();
+            this.clearSelection();
         }
-        
+
         const nodeEl = target.closest('.node');
         if (nodeEl && !target.classList.contains('node-text')) {
             const nodeId = nodeEl.dataset.nodeId;
@@ -1200,8 +1066,8 @@ class NodeEditor {
                         }
                     } else {
                         if (!this.state.selectedNodeIds.has(nodeId)) {
-                             this.state.selectedNodeIds.clear();
-                             this.state.selectedNodeIds.add(nodeId);
+                            this.state.selectedNodeIds.clear();
+                            this.state.selectedNodeIds.add(nodeId);
                         }
                     }
                     this.render();
@@ -1210,7 +1076,7 @@ class NodeEditor {
                 this.enterNode(nodeId);
             }
         }
-        
+
         const path = e.target.closest('path[data-connection-id]');
         if (path) {
             this.state.selectedConnectionId = path.dataset.connectionId;
@@ -1219,7 +1085,7 @@ class NodeEditor {
             this.connectionContextMenu.style.display = 'block';
         }
     }
-    
+
     _onCanvasWheel(e) {
         e.preventDefault();
         const graph = this.getCurrentGraph();
@@ -1228,41 +1094,41 @@ class NodeEditor {
             x: e.clientX - canvasRect.left,
             y: e.clientY - canvasRect.top
         };
-        
+
         const oldZoom = graph.zoom;
         const zoomChange = e.deltaY < 0 ? ZOOM_SENSITIVITY : -ZOOM_SENSITIVITY;
         graph.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, oldZoom + zoomChange));
-        
+
         const zoomRatio = graph.zoom / oldZoom;
         graph.pan.x = mousePos.x - (mousePos.x - graph.pan.x) * zoomRatio;
         graph.pan.y = mousePos.y - (mousePos.y - graph.pan.y) * zoomRatio;
-        
+
         this._renderCanvas();
     }
-    
+
     _onCanvasContextMenu(e) {
         e.preventDefault();
         if (this.interaction.isPanning) return;
         const dx = Math.abs(e.clientX - this.interaction.panStart.x);
         const dy = Math.abs(e.clientY - this.interaction.panStart.y);
         if (dx > 4 || dy > 4) return;
-        
+
         this.contextMenu.style.left = `${e.clientX}px`;
         this.contextMenu.style.top = `${e.clientY}px`;
         this.contextMenu.style.display = 'block';
-        
+
         this.state.contextMenuTarget = this.getCanvasCoordinates(e.clientX, e.clientY);
-        
+
         const atRoot = this.state.navigationStack.length === 1;
         this.contextMenu.querySelector('[data-action="add-graph-input"]').classList.toggle('disabled', atRoot);
         this.contextMenu.querySelector('[data-action="add-graph-output"]').classList.toggle('disabled', atRoot);
     }
-    
+
     _onContextMenuClick(e) {
         const action = e.target.dataset.action;
         if (!action || e.target.classList.contains('disabled')) return;
-        
-        switch(action) {
+
+        switch (action) {
             case 'add-node':
                 this.addNode('default', this.state.contextMenuTarget);
                 break;
@@ -1281,11 +1147,11 @@ class NodeEditor {
                 }
                 break;
         }
-        
+
         this.contextMenu.style.display = 'none';
         this.connectionContextMenu.style.display = 'none';
     }
-    
+
     _onKeyDown(e) {
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
@@ -1293,8 +1159,8 @@ class NodeEditor {
             switch (e.key.toLowerCase()) {
                 case 'c': e.preventDefault(); this.copySelectedNodes(); break;
                 case 'v': e.preventDefault(); this.pasteNodes(); break;
-                case 'a': 
-                    e.preventDefault(); 
+                case 'a':
+                    e.preventDefault();
                     const graph = this.getCurrentGraph();
                     graph.nodes.forEach(node => this.state.selectedNodeIds.add(node.id));
                     this.render();
@@ -1314,17 +1180,17 @@ class NodeEditor {
         e.stopPropagation();
         this.interaction.isDragging = true;
         const mousePos = this.getCanvasCoordinates(e.clientX, e.clientY);
-        
+
         if (!this.state.selectedNodeIds.has(nodeId)) {
             this.state.selectedNodeIds.clear();
             this.state.selectedNodeIds.add(nodeId);
             this.render();
         }
-        
+
         this.interaction.draggedNodes = [];
         this.state.selectedNodeIds.forEach(id => {
             const node = this.findNodeById(id);
-            if(node) {
+            if (node) {
                 this.interaction.draggedNodes.push({
                     id: id,
                     offsetX: mousePos.x - node.x,
@@ -1333,12 +1199,12 @@ class NodeEditor {
             }
         });
     }
-    
+
     _startNodeResize(e, nodeId) {
         e.stopPropagation();
         this.interaction.isResizing = true;
         const nodeData = this.findNodeById(nodeId);
-        
+
         this.interaction.resizeNode = {
             id: nodeId,
             startWidth: nodeData.width,
@@ -1346,7 +1212,7 @@ class NodeEditor {
         };
         this.interaction.panStart = { x: e.clientX, y: e.clientY };
     }
-    
+
     _startPan(e) {
         e.preventDefault();
         this.interaction.isPanning = true;
@@ -1361,44 +1227,44 @@ class NodeEditor {
         }
         this.interaction.isSelecting = true;
         this.interaction.selectionStart = this.getCanvasCoordinates(e.clientX, e.clientY);
-        
+
         this.selectionBox.style.left = `${this.interaction.selectionStart.x}px`;
         this.selectionBox.style.top = `${this.interaction.selectionStart.y}px`;
         this.selectionBox.style.width = '0px';
         this.selectionBox.style.height = '0px';
         this.selectionBox.style.display = 'block';
     }
-    
+
     _startConnection(e, startPointEl) {
         e.stopPropagation();
         this.interaction.isConnecting = true;
         this.interaction.connectionStartPoint = { ...startPointEl.dataset };
-        
+
         const line = document.createElement('div');
         line.className = 'connection-line active';
         line.innerHTML = `<svg><path style="stroke:#4a9eff; stroke-width:4; fill:none;"></path></svg>`;
         this.canvasContent.appendChild(line);
     }
-    
+
     _finishConnection(startPointData, endPointData) {
         if (startPointData.nodeId === endPointData.nodeId || startPointData.type === endPointData.type) {
             return;
         }
 
         const graph = this.getCurrentGraph();
-        
+
         const outputData = startPointData.type === 'output' ? startPointData : endPointData;
         const inputData = startPointData.type === 'input' ? startPointData : endPointData;
-        
+
         const exists = graph.connections.some(c =>
             c.start.nodeId === outputData.nodeId &&
             c.start.index === parseInt(outputData.index) &&
             c.end.nodeId === inputData.nodeId &&
             c.end.index === parseInt(inputData.index)
         );
-        
+
         if (exists) return;
-        
+
         const connection = {
             id: `conn_${Date.now()}`,
             start: {
