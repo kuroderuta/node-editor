@@ -246,11 +246,11 @@ class NodeEditor {
         nodeEl.style.width = `${nodeData.width}px`;
         nodeEl.style.height = `${nodeData.height}px`;
 
-        // MODIFICATION: Use a div for readonly text and a textarea for editable text.
-        const textContentHTML = nodeData.type === 'default'
-            ? `<textarea class="node-text" placeholder="Enter text...">${nodeData.text}</textarea>`
-            : `<div class="node-text-readonly">${nodeData.text}</div>`;
-
+		let textContentHTML = '';
+		if (nodeData.type === 'default') {
+			textContentHTML = `<textarea class="node-text" placeholder="Enter text...">${nodeData.text}</textarea>`;
+		}
+		
         let innerHTML = `
             <div class="node-header">${nodeData.title}</div>
             <div class="node-content">
@@ -611,18 +611,16 @@ class NodeEditor {
                 this.state.graphs[subgraph.id] = subgraph;
                 nodeData.subgraphId = subgraph.id;
                 break;
-            case 'graph-input':
-                nodeData.title = 'Input';
-                nodeData.text = 'Defines an input for the parent graph.';
-                nodeData.color = 'cyan';
-                nodeData.outputs = [{ name: 'Value', color: COLORS.cyan }];
-                break;
-            case 'graph-output':
-                nodeData.title = 'Output';
-                nodeData.text = 'Defines an output for the parent graph.';
-                nodeData.color = 'orange';
-                nodeData.inputs = [{ name: 'Value', color: COLORS.orange }];
-                break;
+			case 'graph-input':
+				nodeData.title = 'Input';
+				nodeData.color = 'cyan';
+				nodeData.outputs = [{ name: 'Value', color: COLORS.cyan }];
+				break;
+			case 'graph-output':
+				nodeData.title = 'Output';
+				nodeData.color = 'orange';
+				nodeData.inputs = [{ name: 'Value', color: COLORS.orange }];
+				break;
         }
 
         graph.nodes.push(nodeData);
