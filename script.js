@@ -1,15 +1,11 @@
-// =================================================================
-// Constants & Configuration
-// =================================================================
-
 const GRID_SIZE = 32;
 const NODE_MIN_WIDTH = 256;
 const NODE_MIN_HEIGHT = 128;
 const CONNECTION_POINT_Y_OFFSET = 32;
 const CONNECTION_POINT_Y_SPACING = 32;
 const ZOOM_SENSITIVITY = 0.1;
-const MAX_ZOOM = 3;
-const MIN_ZOOM = 0.2;
+const MAX_ZOOM = 4; 
+const MIN_ZOOM = 0.25;
 
 const COLORS = {
     default: '#666666',
@@ -22,13 +18,8 @@ const COLORS = {
     cyan: '#44ffff'
 };
 
-// =================================================================
-// Main Application Class
-// =================================================================
-
 class NodeEditor {
     constructor(canvasId) {
-        // --- DOM Element References ---
         this.canvas = document.getElementById(canvasId);
         this.canvasContent = document.getElementById('canvasContent');
         this.selectionBox = document.getElementById('selectionBox');
@@ -37,19 +28,15 @@ class NodeEditor {
         this.contextMenu = document.getElementById('contextMenu');
         this.connectionContextMenu = document.getElementById('connectionContextMenu');
         
-        // --- State Management ---
-        // We consolidate all state into a single object for clarity.
         this.state = this.getInitialState();
 
-        // --- Interaction State ---
-        // These properties track the state of ongoing user interactions.
         this.interaction = {
             isDragging: false,
             isResizing: false,
             isPanning: false,
             isConnecting: false,
             isSelecting: false,
-            didDrag: false, // --- ADDED: Flag to distinguish a drag from a click
+            didDrag: false, 
             draggedNodes: [],
             resizeNode: null,
             connectionStartPoint: null,
@@ -61,19 +48,12 @@ class NodeEditor {
         this.initialize();
     }
 
-    /**
-     * Sets up the initial state of the editor and binds all event listeners.
-     */
     initialize() {
         this.resetState();
         this._bindEventListeners();
         this.render();
     }
 
-    /**
-     * Creates the default state for the application.
-     * @returns {object} The initial state object.
-     */
     getInitialState() {
         const masterGraph = {
             id: 'root',
@@ -95,41 +75,22 @@ class NodeEditor {
         };
     }
     
-    /**
-     * Resets the state to its initial values.
-     */
     resetState() {
         this.state = this.getInitialState();
     }
     
-    // =================================================================
-    // Event Listener Binding
-    // =================================================================
-
-    /**
-     * Binds all necessary event listeners for the editor.
-     * This centralizes event handling setup.
-     */
     _bindEventListeners() {
-        // Canvas interactions
         this.canvas.addEventListener('mousedown', this._onCanvasMouseDown.bind(this));
         this.canvas.addEventListener('wheel', this._onCanvasWheel.bind(this));
         this.canvas.addEventListener('contextmenu', this._onCanvasContextMenu.bind(this));
         
-        // Listen for input on textareas within the canvas (for in-node editing)
         this.canvasContent.addEventListener('input', this._onCanvasContentInput.bind(this));
 
-        // Global mouse movements and releases
         document.addEventListener('mousemove', this._onMouseMove.bind(this));
         document.addEventListener('mouseup', this._onMouseUp.bind(this));
-        
-        // Global clicks for closing menus/deselecting
         document.addEventListener('click', this._onGlobalClick.bind(this));
-        
-        // Keyboard shortcuts
         document.addEventListener('keydown', this._onKeyDown.bind(this));
 
-        // Toolbar buttons
         document.getElementById('addNodeBtn').addEventListener('click', () => this.addNode());
         document.getElementById('saveBtn').addEventListener('click', () => this.saveGraph());
         document.getElementById('loadBtn').addEventListener('click', () => document.getElementById('loadFile').click());
@@ -138,89 +99,52 @@ class NodeEditor {
         document.getElementById('pasteBtn').addEventListener('click', () => this.pasteNodes());
         document.getElementById('deleteBtn').addEventListener('click', () => this.deleteSelected());
         
-        // Context Menus
         this.contextMenu.addEventListener('click', this._onContextMenuClick.bind(this));
         this.connectionContextMenu.addEventListener('click', this._onContextMenuClick.bind(this));
     }
 
-    // =================================================================
-    // State & Data Accessors
-    // =================================================================
-    
-    /**
-     * Gets the currently active graph object from the state.
-     * @returns {object} The current graph.
-     */
     getCurrentGraph() {
         const currentGraphId = this.state.navigationStack[this.state.navigationStack.length - 1];
         return this.state.graphs[currentGraphId];
     }
     
-    /**
-     * Finds a node by its ID in the specified graph.
-     * @param {string} nodeId - The ID of the node to find.
-     * @param {string} [graphId=current] - The ID of the graph to search in.
-     * @returns {object|undefined} The node data object.
-     */
     findNodeById(nodeId, graphId = null) {
         const graph = graphId ? this.state.graphs[graphId] : this.getCurrentGraph();
         return graph ? graph.nodes.find(n => n.id === nodeId) : undefined;
     }
     
-    /**
-     * Finds a graph by its ID.
-     * @param {string} graphId - The ID of the graph to find.
-     * @returns {object|undefined} The graph data object.
-     */
     findGraphById(graphId) {
         return this.state.graphs[graphId];
     }
 
-    // =================================================================
-    // Core Rendering Logic
-    // =================================================================
-
-    /**
-     * The main render function. It orchestrates the drawing of the entire UI
-     * based on the current state.
-     */
     render() {
         this._renderCanvas();
         this._renderToolbar();
         this._renderPropertiesPanel();
     }
     
-    /**
-     * Renders the main canvas content: nodes and connections.
-     */
     _renderCanvas() {
         const graph = this.getCurrentGraph();
         
-        // Store scroll positions of textareas to restore them after re-render
         const textScrolls = {};
         this.canvasContent.querySelectorAll('.node-text').forEach(ta => {
             const nodeId = ta.closest('.node').dataset.nodeId;
             textScrolls[nodeId] = { top: ta.scrollTop, left: ta.scrollLeft };
         });
         
-        // Clear previous content
         this.canvasContent.innerHTML = '<div class="selection-box" id="selectionBox"></div>';
-        this.selectionBox = document.getElementById('selectionBox'); // Re-assign after clearing
+        this.selectionBox = document.getElementById('selectionBox');
 
-        // Update canvas transform (pan & zoom)
         const transform = `translate(${graph.pan.x}px, ${graph.pan.y}px) scale(${graph.zoom})`;
         this.canvasContent.style.transform = transform;
         
-        // Update grid background
         const gridSize = GRID_SIZE * graph.zoom;
         this.canvas.style.backgroundSize = `${gridSize}px ${gridSize}px`;
         this.canvas.style.backgroundPosition = `${graph.pan.x % gridSize}px ${graph.pan.y % gridSize}px`;
 
-        // Render nodes and connections
         graph.nodes.forEach(nodeData => this._renderNode(nodeData));
         graph.connections.forEach(connData => this._renderConnection(connData));
 
-        // Restore scroll positions
         Object.keys(textScrolls).forEach(nodeId => {
             const textarea = this.canvasContent.querySelector(`[data-node-id="${nodeId}"] .node-text`);
             if (textarea) {
@@ -230,11 +154,7 @@ class NodeEditor {
         });
     }
     
-	/**
-     * Creates and appends a single node element to the canvas.
-     * @param {object} nodeData - The data for the node to render.
-     */
-    _renderNode(nodeData) {
+	_renderNode(nodeData) {
         const nodeEl = document.createElement('div');
         const isSelected = this.state.selectedNodeIds.has(nodeData.id);
         const hasSubgraph = nodeData.subgraphId && this.findGraphById(nodeData.subgraphId)?.nodes.length > 0;
@@ -268,11 +188,6 @@ class NodeEditor {
         this._renderNodeConnectionPoints(nodeEl, nodeData);
     }
 
-    /**
-     * Renders the input and output connection points for a node.
-     * @param {HTMLElement} nodeEl - The DOM element of the node.
-     * @param {object} nodeData - The data for the node.
-     */
     _renderNodeConnectionPoints(nodeEl, nodeData) {
         const createPoint = (pointData, type, index) => {
             const yPos = CONNECTION_POINT_Y_OFFSET + (index * CONNECTION_POINT_Y_SPACING);
@@ -297,19 +212,15 @@ class NodeEditor {
         nodeData.outputs.forEach((output, i) => createPoint(output, 'output', i));
 
         const maxIO = Math.max(nodeData.inputs.length, nodeData.outputs.length);
-        const contentMinHeight = (maxIO > 0) ? (maxIO * CONNECTION_POINT_Y_SPACING + 20) : 0;
+        const contentMinHeight = (maxIO > 0) ? (maxIO * CONNECTION_POINT_Y_SPACING + 16) : 0;
         nodeEl.querySelector('.node-content').style.minHeight = `${contentMinHeight}px`;
     }
     
-    /**
-     * Renders a single connection line (SVG path) on the canvas.
-     * @param {object} connData - The data for the connection.
-     */
     _renderConnection(connData) {
         const startNode = this.findNodeById(connData.start.nodeId);
         const endNode = this.findNodeById(connData.end.nodeId);
 
-        if (!startNode || !endNode) return; // Don't render if nodes don't exist
+        if (!startNode || !endNode) return;
         
         const startNodeEl = this.canvasContent.querySelector(`[data-node-id="${startNode.id}"]`);
         const endNodeEl = this.canvasContent.querySelector(`[data-node-id="${endNode.id}"]`);
@@ -341,7 +252,7 @@ class NodeEditor {
         stop2.style.stopColor = endColor;
 
         path.setAttribute('stroke', `url(#${gradId})`);
-        path.dataset.connectionId = connData.id; // For event delegation
+        path.dataset.connectionId = connData.id;
 
         gradient.appendChild(stop1);
         gradient.appendChild(stop2);
@@ -354,21 +265,15 @@ class NodeEditor {
         this.updateConnectionPath(connData.id);
     }
     
-    /**
-     * Renders the toolbar, updating button states and breadcrumbs.
-     */
     _renderToolbar() {
-        // Update button disabled states
         document.getElementById('copyBtn').disabled = this.state.selectedNodeIds.size === 0;
         document.getElementById('pasteBtn').disabled = this.state.copiedNodes.length === 0;
         document.getElementById('deleteBtn').disabled = this.state.selectedNodeIds.size === 0;
         
-        // Update selected count
         const count = this.state.selectedNodeIds.size;
         const countEl = document.getElementById('selectedCount');
         countEl.textContent = count > 0 ? `${count} node${count > 1 ? 's' : ''} selected` : '';
 
-        // Update breadcrumbs
         const breadcrumbsContainer = document.getElementById('breadcrumbs');
         breadcrumbsContainer.innerHTML = '';
         this.state.navigationStack.forEach((graphId, index) => {
@@ -377,7 +282,6 @@ class NodeEditor {
             
             const isLast = index === this.state.navigationStack.length - 1;
 
-            // MODIFICATION START: Make root project name editable
             if (graphId === 'root' && isLast) {
                 const input = document.createElement('input');
                 input.type = 'text';
@@ -391,7 +295,7 @@ class NodeEditor {
                     }
                 };
 
-                input.onchange = (e) => { // Revert if name is empty on blur
+                input.onchange = (e) => {
                     const rootGraph = this.findGraphById('root');
                     if (rootGraph && rootGraph.name.trim() === '') {
                         rootGraph.name = 'Root';
@@ -400,7 +304,7 @@ class NodeEditor {
                 };
                 breadcrumbsContainer.appendChild(input);
 
-            } else { // Original logic for non-editable breadcrumbs
+            } else {
                 const item = document.createElement('span');
                 item.textContent = graph.name;
                 item.className = 'breadcrumb-item';
@@ -412,7 +316,6 @@ class NodeEditor {
                 }
                 breadcrumbsContainer.appendChild(item);
             }
-            // MODIFICATION END
 
             if (!isLast) {
                 const separator = document.createElement('span');
@@ -423,10 +326,7 @@ class NodeEditor {
         });
     }
 
-	/**
-     * Renders the properties panel based on the current selection.
-     */
-    _renderPropertiesPanel() {
+	_renderPropertiesPanel() {
         if (this.state.selectedNodeIds.size === 0) {
             this.propertiesPanel.classList.remove('show');
             return;
@@ -471,7 +371,6 @@ class NodeEditor {
         
         this.propertiesContent.innerHTML = html;
         
-        // Add event listeners for the input fields
         const titleInput = document.getElementById('propNodeTitle');
         const contentInput = document.getElementById('propNodeContent');
         if (titleInput) {
@@ -482,14 +381,6 @@ class NodeEditor {
         }
     }
     
-    // =================================================================
-    // Update & Calculation Helpers
-    // =================================================================
-
-    /**
-     * Recalculates and updates the SVG path for a given connection.
-     * @param {string} connectionId - The ID of the connection to update.
-     */
     updateConnectionPath(connectionId) {
         const graph = this.getCurrentGraph();
         const connection = graph.connections.find(c => c.id === connectionId);
@@ -509,16 +400,15 @@ class NodeEditor {
         const startNodeData = this.findNodeById(connection.start.nodeId);
 
         const startX = startNodeData.x + startNodeEl.offsetWidth;
-        const startY = startNodeData.y + CONNECTION_POINT_Y_OFFSET + (connection.start.index * CONNECTION_POINT_Y_SPACING) + 7;
+        const startY = startNodeData.y + CONNECTION_POINT_Y_OFFSET + (connection.start.index * CONNECTION_POINT_Y_SPACING) + 8;
         const endX = this.findNodeById(connection.end.nodeId).x;
-        const endY = this.findNodeById(connection.end.nodeId).y + CONNECTION_POINT_Y_OFFSET + (connection.end.index * CONNECTION_POINT_Y_SPACING) + 7;
+        const endY = this.findNodeById(connection.end.nodeId).y + CONNECTION_POINT_Y_OFFSET + (connection.end.index * CONNECTION_POINT_Y_SPACING) + 8;
         
         const path = line.querySelector('path');
         const controlOffset = Math.abs(endX - startX) * 0.5;
         const pathData = `M ${startX} ${startY} C ${startX + controlOffset} ${startY} ${endX - controlOffset} ${endY} ${endX} ${endY}`;
         path.setAttribute('d', pathData);
 
-        // Update gradient coordinates
         const gradient = line.querySelector('linearGradient');
         if (gradient) {
             gradient.setAttribute('x1', startX);
@@ -528,20 +418,11 @@ class NodeEditor {
         }
     }
     
-    /**
-     * Updates all connection paths in the current view.
-     */
     updateAllConnectionPaths() {
         const graph = this.getCurrentGraph();
         graph.connections.forEach(conn => this.updateConnectionPath(conn.id));
     }
     
-    /**
-     * Converts screen coordinates to canvas-space coordinates.
-     * @param {number} clientX - The mouse X position on the screen.
-     * @param {number} clientY - The mouse Y position on the screen.
-     * @returns {object} {x, y} coordinates in the canvas space.
-     */
     getCanvasCoordinates(clientX, clientY) {
         const graph = this.getCurrentGraph();
         const canvasRect = this.canvas.getBoundingClientRect();
@@ -550,19 +431,10 @@ class NodeEditor {
         return { x, y };
     }
 
-    /**
-     * Snaps a value to the nearest grid line.
-     * @param {number} value - The value to snap.
-     * @returns {number} The snapped value.
-     */
     snapToGrid(value) {
         return Math.round(value / GRID_SIZE) * GRID_SIZE;
     }
     
-    /**
-     * Updates the inputs/outputs of a parent node when its subgraph's
-     * Input/Output nodes change.
-     */
     _updateParentNodeInterface() {
         if (this.state.navigationStack.length <= 1) return;
         
@@ -585,20 +457,8 @@ class NodeEditor {
             name: outputNode.title,
             color: COLORS[outputNode.color] || COLORS.default
         }));
-        
-        // This method only updates the data model. A re-render is required to see changes.
     }
 
-
-    // =================================================================
-    // User Action Handlers
-    // =================================================================
-
-    /**
-     * Adds a new node to the current graph.
-     * @param {string} [type='default'] - The type of node to add.
-     * @param {object} [position=null] - The {x, y} position to add the node at.
-     */
     addNode(type = 'default', position = null) {
         const graph = this.getCurrentGraph();
         
@@ -622,11 +482,9 @@ class NodeEditor {
             text: '',
         };
 
-        // Customize node based on type
         switch (type) {
             case 'default':
                 nodeData.title = `Node ${this.state.nodeCounter - 1}`;
-                // Create a new subgraph for this node
                 const subgraph = {
                     id: `graph_${nodeId}`,
                     name: nodeData.title,
@@ -658,26 +516,20 @@ class NodeEditor {
         this.render();
     }
     
-    /**
-     * Deletes all currently selected nodes and their connections.
-     */
     deleteSelected() {
         if (this.state.selectedNodeIds.size === 0) return;
         const graph = this.getCurrentGraph();
         let ioNodeDeleted = false;
 
-        // Remove nodes
         graph.nodes = graph.nodes.filter(node => {
             if (this.state.selectedNodeIds.has(node.id)) {
                 if(node.type !== 'default') ioNodeDeleted = true;
-                // Also delete any associated subgraph
                 if(node.subgraphId) delete this.state.graphs[node.subgraphId];
                 return false;
             }
             return true;
         });
 
-        // Remove connections attached to deleted nodes
         graph.connections = graph.connections.filter(conn =>
             !this.state.selectedNodeIds.has(conn.start.nodeId) &&
             !this.state.selectedNodeIds.has(conn.end.nodeId)
@@ -692,9 +544,6 @@ class NodeEditor {
         this.render();
     }
     
-    /**
-     * Clears the current node selection.
-     */
     clearSelection() {
         if (this.state.selectedNodeIds.size > 0) {
             this.state.selectedNodeIds.clear();
@@ -702,10 +551,6 @@ class NodeEditor {
         }
     }
     
-    /**
-     * Selects nodes that fall within a given rectangular area.
-     * @param {object} box - The selection box with {left, top, right, bottom}.
-     */
     selectNodesInBox(box) {
         const graph = this.getCurrentGraph();
         graph.nodes.forEach(node => {
@@ -715,7 +560,6 @@ class NodeEditor {
                 right: node.x + node.width,
                 bottom: node.y + node.height,
             };
-            // Check for intersection
             if (box.right > nodeRect.left && box.left < nodeRect.right && box.bottom > nodeRect.top && box.top < nodeRect.bottom) {
                 this.state.selectedNodeIds.add(node.id);
             }
@@ -723,37 +567,23 @@ class NodeEditor {
         this.render();
     }
 
-	/**
-     * Updates a specific property of a node without a full re-render.
-     * @param {string} nodeId - The ID of the node to update.
-     * @param {string} property - The name of the property ('title' or 'text').
-     * @param {*} value - The new value for the property.
-     * @param {HTMLElement} [sourceElement=null] - The input element that triggered the update.
-     */
-    updateNodeProperty(nodeId, property, value, sourceElement = null) {
+	updateNodeProperty(nodeId, property, value, sourceElement = null) {
         const node = this.findNodeById(nodeId);
         if (!node) return;
 
-        // 1. Update the state object. This is the source of truth.
         node[property] = value;
 
-        // 2. Perform targeted DOM updates to sync the UI with the state,
-        //    avoiding re-updating the element that triggered the change.
-
         if (property === 'title') {
-            // Update the title in the node header on the canvas
             const nodeHeader = this.canvasContent.querySelector(`[data-node-id="${nodeId}"] .node-header`);
             if (nodeHeader && nodeHeader !== sourceElement) {
                 nodeHeader.textContent = value;
             }
 
-            // Update the title in the properties panel
             const propTitleInput = document.getElementById('propNodeTitle');
             if (propTitleInput && propTitleInput !== sourceElement) {
                 propTitleInput.value = value;
             }
 
-            // --- Handle side effects of a title change ---
             let needsToolbarRender = false;
             if (node.subgraphId) {
                 const subgraph = this.findGraphById(node.subgraphId);
@@ -775,13 +605,11 @@ class NodeEditor {
             }
 
         } else if (property === 'text') {
-            // Update the text in the node's textarea on the canvas
             const nodeTextarea = this.canvasContent.querySelector(`[data-node-id="${nodeId}"] .node-text`);
             if (nodeTextarea && nodeTextarea !== sourceElement) {
                 nodeTextarea.value = value;
             }
             
-            // Update the text in the properties panel's textarea
             const propContentTextarea = document.getElementById('propNodeContent');
             if (propContentTextarea && propContentTextarea !== sourceElement) {
                 propContentTextarea.value = value;
@@ -789,12 +617,6 @@ class NodeEditor {
         }
     }
 
-
-    /**
-     * Sets the color of a node and updates its connection points.
-     * @param {string} nodeId - The ID of the node.
-     * @param {string} colorName - The name of the color (e.g., 'red').
-     */
     setNodeColor(nodeId, colorName) {
         const node = this.findNodeById(nodeId);
         if (!node) return;
@@ -813,13 +635,9 @@ class NodeEditor {
         }
 
         this.render();
-        this.updateAllConnectionPaths(); // Must be called after render
+        this.updateAllConnectionPaths();
     }
     
-    /**
-     * Navigates into a node's subgraph.
-     * @param {string} nodeId - The ID of the node to enter.
-     */
     enterNode(nodeId) {
         const node = this.findNodeById(nodeId);
         if (node && node.subgraphId) {
@@ -829,10 +647,6 @@ class NodeEditor {
         }
     }
     
-    /**
-     * Navigates up the hierarchy to a specific level.
-     * @param {number} level - The index in the navigation stack to go to.
-     */
     navigateToLevel(level) {
         if (level >= this.state.navigationStack.length - 1) return;
         this.state.navigationStack = this.state.navigationStack.slice(0, level + 1);
@@ -840,12 +654,7 @@ class NodeEditor {
         this.render();
     }
     
-    // =================================================================
-    // File I/O & Clipboard
-    // =================================================================
-
     saveGraph() {
-        // MODIFICATION START: Prompt for project name if it's the default
         const rootGraph = this.findGraphById('root');
         if (!rootGraph) return;
 
@@ -853,20 +662,18 @@ class NodeEditor {
             const newName = prompt("Please enter a project name before saving:", "My Project");
             if (newName && newName.trim() !== '') {
                 rootGraph.name = newName.trim();
-                this._renderToolbar(); // Update UI to show the new name
+                this._renderToolbar();
             } else {
                 alert("Save cancelled. A valid project name is required.");
-                return; // Abort saving if user cancels or enters empty name
+                return;
             }
         }
 
-        // Sanitize the project name to create a valid filename
         const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}.json`;
-        // MODIFICATION END
 
         const dataStr = JSON.stringify(this.state, (key, value) => {
             if (value instanceof Set) {
-                return Array.from(value); // Convert Sets to Arrays for JSON
+                return Array.from(value);
             }
             return value;
         }, 2);
@@ -874,7 +681,7 @@ class NodeEditor {
         const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
         const linkElement = document.createElement('a');
         linkElement.setAttribute('href', dataUri);
-        linkElement.setAttribute('download', fileName); // Use the new dynamic filename
+        linkElement.setAttribute('download', fileName);
         linkElement.click();
     }
 
@@ -885,7 +692,6 @@ class NodeEditor {
         reader.onload = (e) => {
             try {
                 const loadedState = JSON.parse(e.target.result);
-                // Re-hydrate the state, converting arrays back to Sets
                 loadedState.selectedNodeIds = new Set(loadedState.selectedNodeIds || []);
                 this.state = loadedState;
                 this.render();
@@ -894,7 +700,7 @@ class NodeEditor {
             }
         };
         reader.readAsText(file);
-        event.target.value = ''; // Reset file input
+        event.target.value = '';
     }
     
     copySelectedNodes() {
@@ -903,9 +709,9 @@ class NodeEditor {
         
         this.state.copiedNodes = graph.nodes
             .filter(node => this.state.selectedNodeIds.has(node.id))
-            .map(node => JSON.parse(JSON.stringify(node))); // Deep copy
+            .map(node => JSON.parse(JSON.stringify(node)));
             
-        this._renderToolbar(); // Update paste button state
+        this._renderToolbar();
     }
     
     pasteNodes() {
@@ -914,13 +720,12 @@ class NodeEditor {
         this.clearSelection();
 
         this.state.copiedNodes.forEach(nodeData => {
-            const newNode = JSON.parse(JSON.stringify(nodeData)); // Deep copy
+            const newNode = JSON.parse(JSON.stringify(nodeData));
             newNode.id = `node_${this.state.nodeCounter++}`;
             newNode.title += ' (Copy)';
             newNode.x += GRID_SIZE;
             newNode.y += GRID_SIZE;
             
-            // If the copied node has a subgraph, we need to clone it too.
             if (newNode.subgraphId) {
                 const originalSubgraph = this.findGraphById(newNode.subgraphId);
                 if (originalSubgraph) {
@@ -939,28 +744,20 @@ class NodeEditor {
         this.render();
     }
 
-    // =================================================================
-    // Event Handlers (_on... methods)
-    // =================================================================
-
     _onCanvasContentInput(e) {
-        // Handles text input for textareas inside nodes on the canvas
         if (e.target.classList.contains('node-text')) {
             const nodeId = e.target.closest('.node')?.dataset.nodeId;
             if (nodeId) {
-                // Pass the element that triggered the event to avoid re-updating it
                 this.updateNodeProperty(nodeId, 'text', e.target.value, e.target);
             }
         }
     }
     
     _onCanvasMouseDown(e) {
-        // --- ADDED: Reset didDrag flag on new mouse press
         this.interaction.didDrag = false;
         
         const target = e.target;
         
-        // Delegate based on the target element
         if (target.classList.contains('node-header') || target.classList.contains('node-content') || target.classList.contains('node-text')) {
             this._startNodeDrag(e, target.closest('.node').dataset.nodeId);
         } else if (target.classList.contains('resize-handle')) {
@@ -968,16 +765,15 @@ class NodeEditor {
         } else if (target.classList.contains('connection-point')) {
             this._startConnection(e, target);
         } else if (target === this.canvas || target === this.canvasContent) {
-            if (e.button === 0) { // Left-click
+            if (e.button === 0) {
                 this._startSelectionBox(e);
-            } else if (e.button === 2) { // Right-click for panning
+            } else if (e.button === 2) {
                 this._startPan(e);
             }
         }
     }
     
     _onMouseMove(e) {
-        // --- ADDED: Set didDrag flag if a drag operation is active.
         if (this.interaction.isDragging || this.interaction.isSelecting || this.interaction.isPanning) {
             this.interaction.didDrag = true;
         }
@@ -997,7 +793,6 @@ class NodeEditor {
             nodeData.width = newWidth;
             nodeData.height = newHeight;
             
-            // Partial render for performance
             const nodeEl = this.canvasContent.querySelector(`[data-node-id="${node.id}"]`);
             nodeEl.style.width = newWidth + 'px';
             nodeEl.style.height = newHeight + 'px';
@@ -1023,7 +818,7 @@ class NodeEditor {
             graph.pan.x += dx;
             graph.pan.y += dy;
             this.interaction.lastMousePosition = { x: e.clientX, y: e.clientY };
-            this._renderCanvas(); // Re-render canvas for pan/zoom
+            this._renderCanvas();
         }
         else if (this.interaction.isSelecting) {
             const start = this.interaction.selectionStart;
@@ -1045,7 +840,7 @@ class NodeEditor {
              const startNodeData = this.findNodeById(startPoint.nodeId);
              
              const startX = startNodeData.x + (startPoint.type === 'output' ? startNodeEl.offsetWidth : 0);
-             const startY = startNodeData.y + CONNECTION_POINT_Y_OFFSET + (parseInt(startPoint.index) * CONNECTION_POINT_Y_SPACING) + 7;
+             const startY = startNodeData.y + CONNECTION_POINT_Y_OFFSET + (parseInt(startPoint.index) * CONNECTION_POINT_Y_SPACING) + 8;
              
              const path = tempLine.querySelector('path');
              const controlOffset = Math.abs(mousePos.x - startX) * 0.5;
@@ -1091,30 +886,24 @@ class NodeEditor {
     }
     
     _onGlobalClick(e) {
-        // --- MODIFIED: This is the core of the fix. ---
-        // If the 'click' was the end of a drag, ignore it for selection purposes.
-        // The drag's logic was already handled in onMouseUp.
         if (this.interaction.didDrag) {
             return;
         }
 
         const target = e.target;
         
-        // Hide context menus if clicking outside
         if (!this.contextMenu.contains(target)) this.contextMenu.style.display = 'none';
         if (!this.connectionContextMenu.contains(target)) this.connectionContextMenu.style.display = 'none';
         
-        // Clear selection if clicking on the background (now only for true clicks)
         if (target === this.canvas || target === this.canvasContent) {
              this.clearSelection();
         }
         
-        // Handle node selection (now only for true clicks)
         const nodeEl = target.closest('.node');
-        if (nodeEl && !target.classList.contains('node-text')) { // Prevent selection change when clicking textarea
+        if (nodeEl && !target.classList.contains('node-text')) {
             const nodeId = nodeEl.dataset.nodeId;
-            if (e.detail === 1) { // Single click
-                if (!this.interaction.isDragging) { // Don't re-select at the end of a drag
+            if (e.detail === 1) {
+                if (!this.interaction.isDragging) {
                     if (e.ctrlKey || e.shiftKey) {
                         if (this.state.selectedNodeIds.has(nodeId)) {
                             this.state.selectedNodeIds.delete(nodeId);
@@ -1129,7 +918,7 @@ class NodeEditor {
                     }
                     this.render();
                 }
-            } else if (e.detail === 2) { // Double click
+            } else if (e.detail === 2) {
                 this.enterNode(nodeId);
             }
         }
@@ -1165,11 +954,10 @@ class NodeEditor {
     
     _onCanvasContextMenu(e) {
         e.preventDefault();
-        // Don't show menu if we just finished a pan
         if (this.interaction.isPanning) return;
         const dx = Math.abs(e.clientX - this.interaction.panStart.x);
         const dy = Math.abs(e.clientY - this.interaction.panStart.y);
-        if (dx > 5 || dy > 5) return;
+        if (dx > 4 || dy > 4) return;
         
         this.contextMenu.style.left = `${e.clientX}px`;
         this.contextMenu.style.top = `${e.clientY}px`;
@@ -1211,7 +999,6 @@ class NodeEditor {
     }
     
     _onKeyDown(e) {
-        // Ignore key events if an input field is focused
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
         if (e.ctrlKey || e.metaKey) {
@@ -1232,12 +1019,7 @@ class NodeEditor {
         }
     }
 
-    // =================================================================
-    // Interaction Start/End Helpers
-    // =================================================================
-    
     _startNodeDrag(e, nodeId) {
-        // Prevent drag from starting if the target is the editable textarea
         if (e.target.classList.contains('node-text')) {
             return;
         }
@@ -1245,11 +1027,10 @@ class NodeEditor {
         this.interaction.isDragging = true;
         const mousePos = this.getCanvasCoordinates(e.clientX, e.clientY);
         
-        // If the clicked node is not selected, clear selection and select it
         if (!this.state.selectedNodeIds.has(nodeId)) {
             this.state.selectedNodeIds.clear();
             this.state.selectedNodeIds.add(nodeId);
-            this.render(); // Re-render to show selection
+            this.render();
         }
         
         this.interaction.draggedNodes = [];
@@ -1303,17 +1084,15 @@ class NodeEditor {
     _startConnection(e, startPointEl) {
         e.stopPropagation();
         this.interaction.isConnecting = true;
-        this.interaction.connectionStartPoint = { ...startPointEl.dataset }; // Copy dataset
+        this.interaction.connectionStartPoint = { ...startPointEl.dataset };
         
-        // Create a temporary line for visual feedback
         const line = document.createElement('div');
         line.className = 'connection-line active';
-        line.innerHTML = `<svg><path style="stroke:#4a9eff; stroke-width:3; fill:none;"></path></svg>`;
+        line.innerHTML = `<svg><path style="stroke:#4a9eff; stroke-width:4; fill:none;"></path></svg>`;
         this.canvasContent.appendChild(line);
     }
     
     _finishConnection(startPointData, endPointData) {
-        // Validate connection
         if (startPointData.nodeId === endPointData.nodeId || startPointData.type === endPointData.type) {
             return;
         }
@@ -1323,7 +1102,6 @@ class NodeEditor {
         const outputData = startPointData.type === 'output' ? startPointData : endPointData;
         const inputData = startPointData.type === 'input' ? startPointData : endPointData;
         
-        // Check if a connection already exists
         const exists = graph.connections.some(c =>
             c.start.nodeId === outputData.nodeId &&
             c.start.index === parseInt(outputData.index) &&
@@ -1350,10 +1128,4 @@ class NodeEditor {
     }
 }
 
-// =================================================================
-// Initialization
-// =================================================================
-
-// Expose the editor instance to the window for inline event handlers (like color selection)
-// A more advanced approach would use event delegation for this.
 window.nodeEditor = new NodeEditor('canvas');
