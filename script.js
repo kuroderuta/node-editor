@@ -2,9 +2,9 @@
 // Constants & Configuration
 // =================================================================
 
-const GRID_SIZE = 20;
-const NODE_MIN_WIDTH = 250;
-const NODE_MIN_HEIGHT = 100;
+const GRID_SIZE = 32;
+const NODE_MIN_WIDTH = 256;
+const NODE_MIN_HEIGHT = 128;
 const CONNECTION_POINT_Y_OFFSET = 40;
 const CONNECTION_POINT_Y_SPACING = 30;
 const ZOOM_SENSITIVITY = 0.1;
@@ -114,6 +114,9 @@ class NodeEditor {
         this.canvas.addEventListener('mousedown', this._onCanvasMouseDown.bind(this));
         this.canvas.addEventListener('wheel', this._onCanvasWheel.bind(this));
         this.canvas.addEventListener('contextmenu', this._onCanvasContextMenu.bind(this));
+        
+        // Listen for input on textareas within the canvas (for in-node editing)
+        this.canvasContent.addEventListener('input', this._onCanvasContentInput.bind(this));
 
         // Global mouse movements and releases
         document.addEventListener('mousemove', this._onMouseMove.bind(this));
@@ -192,6 +195,13 @@ class NodeEditor {
     _renderCanvas() {
         const graph = this.getCurrentGraph();
         
+        // Store scroll positions of textareas to restore them after re-render
+        const textScrolls = {};
+        this.canvasContent.querySelectorAll('.node-text').forEach(ta => {
+            const nodeId = ta.closest('.node').dataset.nodeId;
+            textScrolls[nodeId] = { top: ta.scrollTop, left: ta.scrollLeft };
+        });
+        
         // Clear previous content
         this.canvasContent.innerHTML = '<div class="selection-box" id="selectionBox"></div>';
         this.selectionBox = document.getElementById('selectionBox'); // Re-assign after clearing
@@ -208,6 +218,15 @@ class NodeEditor {
         // Render nodes and connections
         graph.nodes.forEach(nodeData => this._renderNode(nodeData));
         graph.connections.forEach(connData => this._renderConnection(connData));
+
+        // Restore scroll positions
+        Object.keys(textScrolls).forEach(nodeId => {
+            const textarea = this.canvasContent.querySelector(`[data-node-id="${nodeId}"] .node-text`);
+            if (textarea) {
+                textarea.scrollTop = textScrolls[nodeId].top;
+                textarea.scrollLeft = textScrolls[nodeId].left;
+            }
+        });
     }
     
     /**
@@ -417,10 +436,10 @@ class NodeEditor {
         const titleInput = document.getElementById('propNodeTitle');
         const contentInput = document.getElementById('propNodeContent');
         if (titleInput) {
-            titleInput.addEventListener('input', (e) => this.updateNodeProperty(e.target.dataset.nodeId, 'title', e.target.value));
+            titleInput.addEventListener('input', (e) => this.updateNodeProperty(e.target.dataset.nodeId, 'title', e.target.value, e.target));
         }
         if (contentInput) {
-            contentInput.addEventListener('input', (e) => this.updateNodeProperty(e.target.dataset.nodeId, 'text', e.target.value));
+            contentInput.addEventListener('input', (e) => this.updateNodeProperty(e.target.dataset.nodeId, 'text', e.target.value, e.target));
         }
     }
     
@@ -528,9 +547,7 @@ class NodeEditor {
             color: COLORS[outputNode.color] || COLORS.default
         }));
         
-        // We need to re-render the parent graph to see the changes
-        // This is a complex operation, for now, we just update the data.
-        // A full implementation might require re-rendering the specific parent node.
+        // This method only updates the data model. A re-render is required to see changes.
     }
 
 
@@ -563,13 +580,13 @@ class NodeEditor {
             inputs: [],
             outputs: [],
             subgraphId: null,
+            text: '',
         };
 
         // Customize node based on type
         switch (type) {
             case 'default':
                 nodeData.title = `Node ${this.state.nodeCounter - 1}`;
-                nodeData.text = '';
                 // Create a new subgraph for this node
                 const subgraph = {
                     id: `graph_${nodeId}`,
@@ -670,32 +687,71 @@ class NodeEditor {
     }
 
     /**
-     * Updates a specific property of a node.
+     * Updates a specific property of a node without a full re-render.
      * @param {string} nodeId - The ID of the node to update.
-     * @param {string} property - The name of the property (e.g., 'title', 'text').
+     * @param {string} property - The name of the property ('title' or 'text').
      * @param {*} value - The new value for the property.
+     * @param {HTMLElement} [sourceElement=null] - The input element that triggered the update.
      */
-    updateNodeProperty(nodeId, property, value) {
+    updateNodeProperty(nodeId, property, value, sourceElement = null) {
         const node = this.findNodeById(nodeId);
         if (!node) return;
 
+        // 1. Update the state object. This is the source of truth.
         node[property] = value;
 
+        // 2. Perform targeted DOM updates to sync the UI with the state,
+        //    avoiding re-updating the element that triggered the change.
+
         if (property === 'title') {
-            // If the node has a subgraph, update its name too
+            // Update the title in the node header on the canvas
+            const nodeHeader = this.canvasContent.querySelector(`[data-node-id="${nodeId}"] .node-header`);
+            if (nodeHeader && nodeHeader !== sourceElement) {
+                nodeHeader.textContent = value;
+            }
+
+            // Update the title in the properties panel
+            const propTitleInput = document.getElementById('propNodeTitle');
+            if (propTitleInput && propTitleInput !== sourceElement) {
+                propTitleInput.value = value;
+            }
+
+            // --- Handle side effects of a title change ---
+            let needsToolbarRender = false;
             if (node.subgraphId) {
                 const subgraph = this.findGraphById(node.subgraphId);
-                if (subgraph) subgraph.name = value;
+                if (subgraph) {
+                    subgraph.name = value;
+                    if (this.state.navigationStack.includes(node.subgraphId)) {
+                        needsToolbarRender = true;
+                    }
+                }
             }
-            // If it's an I/O node, update the parent interface
-            if (node.type !== 'default') {
+
+            if (node.type === 'graph-input' || node.type === 'graph-output') {
                 this._updateParentNodeInterface();
+                // This is a complex update. A full render is the simplest way to ensure
+                // visual consistency, though it will cause defocus for this specific case.
+                this.render(); 
+            } else if (needsToolbarRender) {
+                this._renderToolbar();
+            }
+
+        } else if (property === 'text') {
+            // Update the text in the node's textarea on the canvas
+            const nodeTextarea = this.canvasContent.querySelector(`[data-node-id="${nodeId}"] .node-text`);
+            if (nodeTextarea && nodeTextarea !== sourceElement) {
+                nodeTextarea.value = value;
+            }
+            
+            // Update the text in the properties panel's textarea
+            const propContentTextarea = document.getElementById('propNodeContent');
+            if (propContentTextarea && propContentTextarea !== sourceElement) {
+                propContentTextarea.value = value;
             }
         }
-        
-        // Re-render the specific node and properties panel instead of the whole canvas
-        this.render(); // Simple for now, can be optimized
     }
+
 
     /**
      * Sets the color of a node and updates its connection points.
@@ -832,11 +888,22 @@ class NodeEditor {
     // Event Handlers (_on... methods)
     // =================================================================
 
+    _onCanvasContentInput(e) {
+        // Handles text input for textareas inside nodes on the canvas
+        if (e.target.classList.contains('node-text')) {
+            const nodeId = e.target.closest('.node')?.dataset.nodeId;
+            if (nodeId) {
+                // Pass the element that triggered the event to avoid re-updating it
+                this.updateNodeProperty(nodeId, 'text', e.target.value, e.target);
+            }
+        }
+    }
+    
     _onCanvasMouseDown(e) {
         const target = e.target;
         
         // Delegate based on the target element
-        if (target.classList.contains('node-header') || target.classList.contains('node-content')) {
+        if (target.classList.contains('node-header') || target.classList.contains('node-content') || target.classList.contains('node-text')) {
             this._startNodeDrag(e, target.closest('.node').dataset.nodeId);
         } else if (target.classList.contains('resize-handle')) {
             this._startNodeResize(e, target.dataset.nodeId);
@@ -974,20 +1041,24 @@ class NodeEditor {
         
         // Handle node selection
         const nodeEl = target.closest('.node');
-        if (nodeEl) {
+        if (nodeEl && !target.classList.contains('node-text')) { // Prevent selection change when clicking textarea
             const nodeId = nodeEl.dataset.nodeId;
             if (e.detail === 1) { // Single click
-                if (e.ctrlKey || e.shiftKey) {
-                    if (this.state.selectedNodeIds.has(nodeId)) {
-                        this.state.selectedNodeIds.delete(nodeId);
+                if (!this.interaction.isDragging) { // Don't re-select at the end of a drag
+                    if (e.ctrlKey || e.shiftKey) {
+                        if (this.state.selectedNodeIds.has(nodeId)) {
+                            this.state.selectedNodeIds.delete(nodeId);
+                        } else {
+                            this.state.selectedNodeIds.add(nodeId);
+                        }
                     } else {
-                        this.state.selectedNodeIds.add(nodeId);
+                        if (!this.state.selectedNodeIds.has(nodeId)) {
+                             this.state.selectedNodeIds.clear();
+                             this.state.selectedNodeIds.add(nodeId);
+                        }
                     }
-                } else {
-                    this.state.selectedNodeIds.clear();
-                    this.state.selectedNodeIds.add(nodeId);
+                    this.render();
                 }
-                this.render();
             } else if (e.detail === 2) { // Double click
                 this.enterNode(nodeId);
             }
@@ -1096,6 +1167,10 @@ class NodeEditor {
     // =================================================================
     
     _startNodeDrag(e, nodeId) {
+        // Prevent drag from starting if the target is the editable textarea
+        if (e.target.classList.contains('node-text')) {
+            return;
+        }
         e.stopPropagation();
         this.interaction.isDragging = true;
         const mousePos = this.getCanvasCoordinates(e.clientX, e.clientY);
@@ -1163,7 +1238,7 @@ class NodeEditor {
         // Create a temporary line for visual feedback
         const line = document.createElement('div');
         line.className = 'connection-line active';
-        line.innerHTML = `<svg><path style="stroke:#4a9eff; stroke-width:3;"></path></svg>`;
+        line.innerHTML = `<svg><path style="stroke:#4a9eff; stroke-width:3; fill:none;"></path></svg>`;
         this.canvasContent.appendChild(line);
     }
     
