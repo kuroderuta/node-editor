@@ -659,7 +659,7 @@ class NodeEditor {
     // ----- SAVE & LOAD -----
 
     /**
-     * Saves the full graph data to the original, detailed JSON format.
+     * Saves the full graph data to the original, detailed JSON format, preserving positions.
      */
     saveGraph() {
         const rootGraph = this.findGraphById('root');
@@ -693,7 +693,7 @@ class NodeEditor {
     }
 
     /**
-     * UPDATED: Smart loader that detects file format (full, legacy simple, or new readable) and loads accordingly.
+     * Smart loader that detects file format and loads accordingly.
      */
     loadGraph(event) {
         const file = event.target.files[0];
@@ -707,8 +707,8 @@ class NodeEditor {
                 if (!loadedData) {
                     throw new Error("File is empty or invalid.");
                 }
-
-                // Check for the new readable format first
+                
+                // Check for the new readable format (v2 or higher)
                 if (loadedData.format && loadedData.format.startsWith("node-graph-v") && loadedData.graph) {
                     this._loadReadableGraph(loadedData);
                 
@@ -734,8 +734,12 @@ class NodeEditor {
         event.target.value = ''; // Reset file input
     }
     
+    /**
+     * Loads the full graph, preserving exact node positions and sizes.
+     */
     _loadFullGraph(loadedData) {
         this.resetState();
+        // Directly use the loaded graph data, which includes positions.
         this.state.graphs = loadedData.graphs;
 
         let maxId = 0;
@@ -748,12 +752,7 @@ class NodeEditor {
             });
         });
         this.state.nodeCounter = maxId + 1;
-        
-        // Auto-layout all graphs after loading
-        Object.values(this.state.graphs).forEach(graph => {
-            this._procedurallyLayoutGraph(graph);
-        });
-        
+        // No procedural layout is called. We just render the saved state.
         this.render();
     }
 
@@ -800,9 +799,7 @@ class NodeEditor {
     // ----- NEW READABLE & LOGIC-ONLY SAVE/LOAD -----
 
     /**
-     * Saves the graph to a human-readable, logic-only JSON file.
-     * This format uses nested objects for subgraphs and readable string IDs.
-     * It does NOT store position or size, as layout is procedural.
+     * Saves the graph to a human-readable, logic-only JSON file without positional data.
      */
     saveSimpleGraph() {
         const rootGraph = this.findGraphById('root');
@@ -819,7 +816,7 @@ class NodeEditor {
             }
         }
 
-        const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}_logic.json`;
+        const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}_readable.json`;
 
         const nodeIdToHandleMap = new Map();
         const usedHandles = new Set();
@@ -835,7 +832,7 @@ class NodeEditor {
         const readableGraph = this._convertGraphToReadable(rootGraph.id, nodeIdToHandleMap);
 
         const saveData = {
-            format: "node-graph-v4-logic-only", // Version identifier
+            format: "node-graph-v4-logic-only", // Updated format version
             title: rootGraph.name,
             graph: readableGraph
         };
@@ -850,7 +847,7 @@ class NodeEditor {
     }
 
     /**
-     * HELPER: Recursively converts a graph into a nested, readable format.
+     * HELPER: Recursively converts a graph to a nested, readable format, omitting positional data.
      */
     _convertGraphToReadable(graphId, nodeIdToHandleMap) {
         const graph = this.findGraphById(graphId);
@@ -862,19 +859,21 @@ class NodeEditor {
         };
 
         readableGraph.nodes = graph.nodes.map(node => {
-            // Explicitly copy only the properties we want to save
+            // Create a copy to avoid modifying the original state
+            const nodeCopy = JSON.parse(JSON.stringify(node));
+
             const readableNode = {
-                id: nodeIdToHandleMap.get(node.id),
-                title: node.title,
-                text: node.text,
-                color: node.color,
-                type: node.type,
-                inputs: node.inputs.map(i => ({ name: i.name, color: i.color })),
-                outputs: node.outputs.map(o => ({ name: o.name, color: o.color })),
+                id: nodeIdToHandleMap.get(nodeCopy.id),
+                title: nodeCopy.title,
+                text: nodeCopy.text,
+                color: nodeCopy.color,
+                type: nodeCopy.type,
+                inputs: nodeCopy.inputs,
+                outputs: nodeCopy.outputs
             };
 
-            if (node.subgraphId) {
-                readableNode.subgraph = this._convertGraphToReadable(node.subgraphId, nodeIdToHandleMap);
+            if (nodeCopy.subgraphId) {
+                readableNode.subgraph = this._convertGraphToReadable(nodeCopy.subgraphId, nodeIdToHandleMap);
             }
             return readableNode;
         });
@@ -883,13 +882,13 @@ class NodeEditor {
             const startNode = this.findNodeById(conn.start.nodeId, graph.id);
             const endNode = this.findNodeById(conn.end.nodeId, graph.id);
             if (!startNode || !endNode) return null;
-
+            
             const fromPinName = startNode.outputs[conn.start.index]?.name || `output_${conn.start.index}`;
             const toPinName = endNode.inputs[conn.end.index]?.name || `input_${conn.end.index}`;
 
             return {
                 from: `${nodeIdToHandleMap.get(conn.start.nodeId)}.outputs.${fromPinName}`,
-                to: `${nodeIdToHandleMap.get(conn.end.nodeId)}.inputs.${toPinName}`
+                to: `${nodeIdToHandleMap.get(conn.end.nodeId)}.inputs.${toPinName}`,
             };
         }).filter(Boolean);
 
@@ -897,27 +896,23 @@ class NodeEditor {
     }
     
     /**
-     * NEW: Loads a graph from the human-readable format.
+     * Loads a graph from the readable format and applies a procedural layout.
      */
     _loadReadableGraph(readableData) {
         this.resetState();
         const flatGraphs = {};
         const handleToNodeIdMap = new Map();
 
-        // Create a root graph structure to begin
-        const rootGraphData = {
-            ...readableData.graph, // Copy nodes and connections
-            id: 'root',
-            name: readableData.title || 'Loaded Graph',
-            pan: { x: 0, y: 0 },
-            zoom: 1,
-        };
+        // The root graph in the readable file has a special status.
+        const rootReadableGraph = readableData.graph;
+        rootReadableGraph.id = 'root'; // Assign the internal 'root' id
+        rootReadableGraph.name = readableData.title || 'Loaded Graph';
 
-        this._convertReadableToState(rootGraphData, 'root', flatGraphs, handleToNodeIdMap);
+        this._convertReadableToState(rootReadableGraph, flatGraphs, handleToNodeIdMap);
         
         this.state.graphs = flatGraphs;
 
-        // Auto-layout all graphs after loading
+        // *** NEW: Apply the procedural layout to every loaded graph ***
         Object.values(this.state.graphs).forEach(graph => {
             this._procedurallyLayoutGraph(graph);
         });
@@ -931,13 +926,14 @@ class NodeEditor {
     }
 
     /**
-     * HELPER: Recursively traverses the readable graph format and flattens it into the editor's state.
+     * HELPER: Recursively flattens the readable graph format into the editor's state.
      */
-    _convertReadableToState(readableGraph, graphId, flatGraphs, handleToNodeIdMap) {
+    _convertReadableToState(readableGraph, flatGraphs, handleToNodeIdMap) {
+        // This is the first time we see this graph, so create it.
         const newGraph = {
-            id: graphId,
-            name: readableGraph.name || 'Subgraph',
-            pan: { x: 0, y: 0 },
+            id: readableGraph.id,
+            name: readableGraph.name,
+            pan: { x: 50, y: 50 }, // Default pan/zoom
             zoom: 1,
             nodes: [],
             connections: []
@@ -950,59 +946,60 @@ class NodeEditor {
             const newNode = {
                 ...readableNode,
                 id: internalNodeId,
-                x: 0, y: 0, // Position will be set by procedural layout
+                // Positions and sizes are NOT loaded, they will be generated.
+                x: 0, 
+                y: 0,
                 width: NODE_MIN_WIDTH,
                 height: NODE_MIN_HEIGHT,
             };
 
             if (readableNode.subgraph) {
-                const subgraphId = `graph_${internalNodeId}`;
-                newNode.subgraphId = subgraphId;
-                this._convertReadableToState(readableNode.subgraph, subgraphId, flatGraphs, handleToNodeIdMap);
+                const subgraph = readableNode.subgraph;
+                // Assign a unique internal ID for the subgraph
+                subgraph.id = `graph_${internalNodeId}`;
+                subgraph.name = readableNode.title;
+                newNode.subgraphId = subgraph.id;
+                this._convertReadableToState(subgraph, flatGraphs, handleToNodeIdMap);
                 delete newNode.subgraph;
             }
             newGraph.nodes.push(newNode);
         });
 
-        readableGraph.connections.forEach(readableConn => {
-            const fromParts = readableConn.from.split('.');
-            const toParts = readableConn.to.split('.');
+        if (readableGraph.connections) {
+            readableGraph.connections.forEach(readableConn => {
+                const fromParts = readableConn.from.split('.');
+                const toParts = readableConn.to.split('.');
 
-            if (fromParts.length < 3 || toParts.length < 3) return;
+                const startNodeHandle = fromParts[0];
+                const fromPinName = fromParts[2];
+                const endNodeHandle = toParts[0];
+                const toPinName = toParts[2];
 
-            const startNodeHandle = fromParts[0];
-            const fromPinName = fromParts.slice(2).join('.');
-            const endNodeHandle = toParts[0];
-            const toPinName = toParts.slice(2).join('.');
+                const startNodeId = handleToNodeIdMap.get(startNodeHandle);
+                const endNodeId = handleToNodeIdMap.get(endNodeHandle);
+                const startNode = newGraph.nodes.find(n => n.id === startNodeId);
+                const endNode = newGraph.nodes.find(n => n.id === endNodeId);
 
-            const startNodeId = handleToNodeIdMap.get(startNodeHandle);
-            const endNodeId = handleToNodeIdMap.get(endNodeHandle);
-
-            const startNode = newGraph.nodes.find(n => n.id === startNodeId);
-            const endNode = newGraph.nodes.find(n => n.id === endNodeId);
-
-            if (startNode && endNode) {
-                const startIndex = startNode.outputs.findIndex(o => o.name === fromPinName);
-                const endIndex = endNode.inputs.findIndex(i => i.name === toPinName);
-                
-                if (startIndex !== -1 && endIndex !== -1) {
-                    newGraph.connections.push({
-                        id: `conn_${Date.now()}_${Math.random()}`,
-                        start: { nodeId: startNodeId, index: startIndex },
-                        end: { nodeId: endNodeId, index: endIndex }
-                    });
+                if (startNode && endNode) {
+                    const startIndex = startNode.outputs.findIndex(o => o.name === fromPinName);
+                    const endIndex = endNode.inputs.findIndex(i => i.name === toPinName);
+                    
+                    if (startIndex !== -1 && endIndex !== -1) {
+                        newGraph.connections.push({
+                            id: `conn_${Date.now()}_${Math.random()}`,
+                            start: { nodeId: startNodeId, index: startIndex },
+                            end: { nodeId: endNodeId, index: endIndex }
+                        });
+                    }
                 }
-            }
-        });
+            });
+        }
         
         flatGraphs[newGraph.id] = newGraph;
     }
 
-    // ----- NEW PROCEDURAL LAYOUT -----
-    
     /**
-     * Arranges nodes in a given graph procedurally using a layered layout.
-     * @param {object} graph The graph object to apply the layout to.
+     * NEW: Arranges nodes in a graph procedurally using a layered layout.
      */
     _procedurallyLayoutGraph(graph) {
         if (!graph || !graph.nodes || graph.nodes.length === 0) {
@@ -1012,11 +1009,11 @@ class NodeEditor {
         const PADDING_X = 350; // Horizontal space between node columns
         const PADDING_Y = 200; // Vertical space between nodes in a column
 
-        const nodeLayers = new Map(); // Stores the layer (column) for each node
-        const layerCounts = new Map(); // Stores how many nodes are in each layer so far
+        const nodeLayers = new Map();
+        const layerNodeIndexes = new Map(); 
         const nodesToProcess = [];
 
-        // Find root nodes (no incoming connections) and add to layer 0
+        // 1. Find root nodes (no incoming connections) and add to layer 0
         graph.nodes.forEach(node => {
             const incoming = graph.connections.filter(c => c.end.nodeId === node.id);
             if (incoming.length === 0) {
@@ -1024,14 +1021,8 @@ class NodeEditor {
                 nodesToProcess.push(node);
             }
         });
-        
-        // If there are cycles, some nodes might not have a root. Start them at layer 0.
-        if (nodesToProcess.length === 0 && graph.nodes.length > 0) {
-            nodeLayers.set(graph.nodes[0].id, 0);
-            nodesToProcess.push(graph.nodes[0]);
-        }
 
-        // BFS to assign layers to all other nodes
+        // 2. BFS to assign layers to all other nodes
         let head = 0;
         while(head < nodesToProcess.length) {
             const currentNode = nodesToProcess[head++];
@@ -1050,45 +1041,32 @@ class NodeEditor {
             });
         }
 
-        // Assign X and Y coordinates based on layers
+        // 3. Assign X and Y coordinates based on layers
         graph.nodes.forEach(node => {
             const layer = nodeLayers.get(node.id) || 0; // Default to layer 0 if isolated
-            const nodesInLayer = layerCounts.get(layer) || 0;
+            const indexInLayer = layerNodeIndexes.get(layer) || 0;
 
             node.x = layer * PADDING_X;
-            node.y = nodesInLayer * PADDING_Y;
+            node.y = indexInLayer * PADDING_Y;
             
-            layerCounts.set(layer, nodesInLayer + 1);
+            layerNodeIndexes.set(layer, indexInLayer + 1);
         });
-
-        // Center the entire graph view
+        
         graph.pan = { x: 50, y: 50 };
         graph.zoom = 1;
     }
 
-
     // ----- LEGACY & UTILITY METHODS -----
     
-    /**
-     * RETAINED for backward compatibility: Loads a graph from the legacy simplified JSON object.
-     */
     _loadLegacySimpleGraph(simpleData) {
         this.resetState();
         const rootGraph = this.getCurrentGraph();
         rootGraph.name = simpleData.title || 'Loaded Graph';
         this._convertLegacySimpleToGraph(simpleData.story, rootGraph);
-        
-        // Auto-layout all graphs after loading
-        Object.values(this.state.graphs).forEach(graph => {
-            this._procedurallyLayoutGraph(graph);
-        });
-
+        this._procedurallyLayoutGraph(rootGraph); // Apply layout to legacy format too
         this.render();
     }
 
-    /**
-     * RETAINED for backward compatibility: The original conversion logic for the legacy format.
-     */
     _convertLegacySimpleToGraph(simpleNodesArray, targetGraph) {
         const simpleIdToNodeIdMap = new Map();
         const usedSimpleIds = new Set();
@@ -1110,7 +1088,8 @@ class NodeEditor {
                 id: editorNodeId,
                 title: simpleNode.name,
                 text: simpleNode.text || '',
-                x: 0, y: 0, // Will be set by layout
+                x: 0, // Position will be set procedurally
+                y: 0,
                 width: NODE_MIN_WIDTH,
                 height: NODE_MIN_HEIGHT,
                 color: 'default',
@@ -1135,6 +1114,7 @@ class NodeEditor {
                 };
                 this.state.graphs[subgraphId] = subgraph;
                 this._convertLegacySimpleToGraph(simpleNode.logic, subgraph);
+                this._procedurallyLayoutGraph(subgraph); // Layout subgraphs too
             }
             targetGraph.nodes.push(nodeData);
         });
@@ -1160,9 +1140,6 @@ class NodeEditor {
         });
     }
 
-    /**
-     * RETAINED: Helper to generate a unique, URL-friendly handle from a string.
-     */
     _generateUniqueHandle(baseName, existingHandles) {
         let handle = (baseName || 'unnamed-node').toLowerCase()
             .trim()
