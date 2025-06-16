@@ -93,7 +93,6 @@ class NodeEditor {
 
         document.getElementById('addNodeBtn').addEventListener('click', () => this.addNode());
         document.getElementById('saveBtn').addEventListener('click', () => this.saveGraph());
-        // Link to the new, improved simple save function
         document.getElementById('saveSimpleBtn').addEventListener('click', () => this.saveSimpleGraph());
         document.getElementById('loadBtn').addEventListener('click', () => document.getElementById('loadFile').click());
         document.getElementById('loadFile').addEventListener('change', (e) => this.loadGraph(e));
@@ -832,7 +831,7 @@ class NodeEditor {
         const readableGraph = this._convertGraphToReadable(rootGraph.id, nodeIdToHandleMap);
 
         const saveData = {
-            format: "node-graph-v4-logic-only", // Updated format version
+            format: "node-graph-v4-logic-only",
             title: rootGraph.name,
             graph: readableGraph
         };
@@ -847,7 +846,8 @@ class NodeEditor {
     }
 
     /**
-     * HELPER: Recursively converts a graph to a nested, readable format, omitting positional data.
+     * HELPER: Recursively converts a graph to a nested, readable format, omitting positional data
+     * and handling ambiguous pin names.
      */
     _convertGraphToReadable(graphId, nodeIdToHandleMap) {
         const graph = this.findGraphById(graphId);
@@ -859,9 +859,7 @@ class NodeEditor {
         };
 
         readableGraph.nodes = graph.nodes.map(node => {
-            // Create a copy to avoid modifying the original state
             const nodeCopy = JSON.parse(JSON.stringify(node));
-
             const readableNode = {
                 id: nodeIdToHandleMap.get(nodeCopy.id),
                 title: nodeCopy.title,
@@ -883,12 +881,19 @@ class NodeEditor {
             const endNode = this.findNodeById(conn.end.nodeId, graph.id);
             if (!startNode || !endNode) return null;
             
-            const fromPinName = startNode.outputs[conn.start.index]?.name || `output_${conn.start.index}`;
-            const toPinName = endNode.inputs[conn.end.index]?.name || `input_${conn.end.index}`;
+            // --- AMBIGUITY FIX START ---
+            const startPinName = startNode.outputs[conn.start.index]?.name || `output_${conn.start.index}`;
+            const isStartPinAmbiguous = startNode.outputs.filter(p => p.name === startPinName).length > 1;
+            const finalStartPin = isStartPinAmbiguous ? `${startPinName}:${conn.start.index}` : startPinName;
+            
+            const endPinName = endNode.inputs[conn.end.index]?.name || `input_${conn.end.index}`;
+            const isEndPinAmbiguous = endNode.inputs.filter(p => p.name === endPinName).length > 1;
+            const finalEndPin = isEndPinAmbiguous ? `${endPinName}:${conn.end.index}` : endPinName;
+            // --- AMBIGUITY FIX END ---
 
             return {
-                from: `${nodeIdToHandleMap.get(conn.start.nodeId)}.outputs.${fromPinName}`,
-                to: `${nodeIdToHandleMap.get(conn.end.nodeId)}.inputs.${toPinName}`,
+                from: `${nodeIdToHandleMap.get(conn.start.nodeId)}.outputs.${finalStartPin}`,
+                to: `${nodeIdToHandleMap.get(conn.end.nodeId)}.inputs.${finalEndPin}`,
             };
         }).filter(Boolean);
 
@@ -903,16 +908,14 @@ class NodeEditor {
         const flatGraphs = {};
         const handleToNodeIdMap = new Map();
 
-        // The root graph in the readable file has a special status.
         const rootReadableGraph = readableData.graph;
-        rootReadableGraph.id = 'root'; // Assign the internal 'root' id
+        rootReadableGraph.id = 'root';
         rootReadableGraph.name = readableData.title || 'Loaded Graph';
 
         this._convertReadableToState(rootReadableGraph, flatGraphs, handleToNodeIdMap);
         
         this.state.graphs = flatGraphs;
 
-        // *** NEW: Apply the procedural layout to every loaded graph ***
         Object.values(this.state.graphs).forEach(graph => {
             this._procedurallyLayoutGraph(graph);
         });
@@ -926,14 +929,14 @@ class NodeEditor {
     }
 
     /**
-     * HELPER: Recursively flattens the readable graph format into the editor's state.
+     * HELPER: Recursively flattens the readable graph format into the editor's state,
+     * correctly parsing potentially ambiguous pin names.
      */
     _convertReadableToState(readableGraph, flatGraphs, handleToNodeIdMap) {
-        // This is the first time we see this graph, so create it.
         const newGraph = {
             id: readableGraph.id,
             name: readableGraph.name,
-            pan: { x: 50, y: 50 }, // Default pan/zoom
+            pan: { x: 50, y: 50 },
             zoom: 1,
             nodes: [],
             connections: []
@@ -946,7 +949,6 @@ class NodeEditor {
             const newNode = {
                 ...readableNode,
                 id: internalNodeId,
-                // Positions and sizes are NOT loaded, they will be generated.
                 x: 0, 
                 y: 0,
                 width: NODE_MIN_WIDTH,
@@ -955,7 +957,6 @@ class NodeEditor {
 
             if (readableNode.subgraph) {
                 const subgraph = readableNode.subgraph;
-                // Assign a unique internal ID for the subgraph
                 subgraph.id = `graph_${internalNodeId}`;
                 subgraph.name = readableNode.title;
                 newNode.subgraphId = subgraph.id;
@@ -971,9 +972,27 @@ class NodeEditor {
                 const toParts = readableConn.to.split('.');
 
                 const startNodeHandle = fromParts[0];
-                const fromPinName = fromParts[2];
                 const endNodeHandle = toParts[0];
-                const toPinName = toParts[2];
+
+                // --- AMBIGUITY FIX START ---
+                let startPinRef = fromParts.slice(2).join('.');
+                let startPinName = startPinRef;
+                let startIndex = -1;
+                if (startPinRef.includes(':')) {
+                    const parts = startPinRef.split(':');
+                    startPinName = parts[0];
+                    startIndex = parseInt(parts[1], 10);
+                }
+
+                let endPinRef = toParts.slice(2).join('.');
+                let endPinName = endPinRef;
+                let endIndex = -1;
+                if (endPinRef.includes(':')) {
+                    const parts = endPinRef.split(':');
+                    endPinName = parts[0];
+                    endIndex = parseInt(parts[1], 10);
+                }
+                // --- AMBIGUITY FIX END ---
 
                 const startNodeId = handleToNodeIdMap.get(startNodeHandle);
                 const endNodeId = handleToNodeIdMap.get(endNodeHandle);
@@ -981,8 +1000,12 @@ class NodeEditor {
                 const endNode = newGraph.nodes.find(n => n.id === endNodeId);
 
                 if (startNode && endNode) {
-                    const startIndex = startNode.outputs.findIndex(o => o.name === fromPinName);
-                    const endIndex = endNode.inputs.findIndex(i => i.name === toPinName);
+                    if (startIndex === -1) {
+                        startIndex = startNode.outputs.findIndex(o => o.name === startPinName);
+                    }
+                    if (endIndex === -1) {
+                        endIndex = endNode.inputs.findIndex(i => i.name === endPinName);
+                    }
                     
                     if (startIndex !== -1 && endIndex !== -1) {
                         newGraph.connections.push({
@@ -1006,14 +1029,13 @@ class NodeEditor {
             return;
         }
 
-        const PADDING_X = 350; // Horizontal space between node columns
-        const PADDING_Y = 200; // Vertical space between nodes in a column
+        const PADDING_X = 350;
+        const PADDING_Y = 200;
 
         const nodeLayers = new Map();
         const layerNodeIndexes = new Map(); 
         const nodesToProcess = [];
 
-        // 1. Find root nodes (no incoming connections) and add to layer 0
         graph.nodes.forEach(node => {
             const incoming = graph.connections.filter(c => c.end.nodeId === node.id);
             if (incoming.length === 0) {
@@ -1022,7 +1044,6 @@ class NodeEditor {
             }
         });
 
-        // 2. BFS to assign layers to all other nodes
         let head = 0;
         while(head < nodesToProcess.length) {
             const currentNode = nodesToProcess[head++];
@@ -1031,7 +1052,7 @@ class NodeEditor {
             const outgoingConns = graph.connections.filter(c => c.start.nodeId === currentNode.id);
             outgoingConns.forEach(conn => {
                 const targetNodeId = conn.end.nodeId;
-                if (!nodeLayers.has(targetNodeId)) { // If not already processed
+                if (!nodeLayers.has(targetNodeId)) {
                     nodeLayers.set(targetNodeId, currentLayer + 1);
                     const targetNode = graph.nodes.find(n => n.id === targetNodeId);
                     if (targetNode) {
@@ -1041,9 +1062,8 @@ class NodeEditor {
             });
         }
 
-        // 3. Assign X and Y coordinates based on layers
         graph.nodes.forEach(node => {
-            const layer = nodeLayers.get(node.id) || 0; // Default to layer 0 if isolated
+            const layer = nodeLayers.get(node.id) || 0;
             const indexInLayer = layerNodeIndexes.get(layer) || 0;
 
             node.x = layer * PADDING_X;
@@ -1063,7 +1083,7 @@ class NodeEditor {
         const rootGraph = this.getCurrentGraph();
         rootGraph.name = simpleData.title || 'Loaded Graph';
         this._convertLegacySimpleToGraph(simpleData.story, rootGraph);
-        this._procedurallyLayoutGraph(rootGraph); // Apply layout to legacy format too
+        this._procedurallyLayoutGraph(rootGraph);
         this.render();
     }
 
@@ -1088,7 +1108,7 @@ class NodeEditor {
                 id: editorNodeId,
                 title: simpleNode.name,
                 text: simpleNode.text || '',
-                x: 0, // Position will be set procedurally
+                x: 0,
                 y: 0,
                 width: NODE_MIN_WIDTH,
                 height: NODE_MIN_HEIGHT,
@@ -1114,7 +1134,7 @@ class NodeEditor {
                 };
                 this.state.graphs[subgraphId] = subgraph;
                 this._convertLegacySimpleToGraph(simpleNode.logic, subgraph);
-                this._procedurallyLayoutGraph(subgraph); // Layout subgraphs too
+                this._procedurallyLayoutGraph(subgraph);
             }
             targetGraph.nodes.push(nodeData);
         });
