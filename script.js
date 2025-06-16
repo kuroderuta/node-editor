@@ -928,7 +928,7 @@ class NodeEditor {
         this.render();
     }
 
-    /**
+	/**
      * HELPER: Recursively flattens the readable graph format into the editor's state,
      * correctly parsing potentially ambiguous pin names.
      */
@@ -946,22 +946,33 @@ class NodeEditor {
             const internalNodeId = `node_${this.state.nodeCounter++}`;
             handleToNodeIdMap.set(readableNode.id, internalNodeId);
             
+            // --- REPLACEMENT START ---
+            // Build the new node object explicitly instead of spreading.
+            // This is more robust and avoids potential property conflicts.
             const newNode = {
-                ...readableNode,
+                title: readableNode.title,
+                text: readableNode.text,
+                color: readableNode.color,
+                type: readableNode.type,
+                inputs: readableNode.inputs,
+                outputs: readableNode.outputs,
                 id: internalNodeId,
                 x: 0, 
                 y: 0,
                 width: NODE_MIN_WIDTH,
                 height: NODE_MIN_HEIGHT,
+                subgraphId: null, // Initialize subgraphId to null
             };
+            // --- REPLACEMENT END ---
 
             if (readableNode.subgraph) {
-                const subgraph = readableNode.subgraph;
-                subgraph.id = `graph_${internalNodeId}`;
-                subgraph.name = readableNode.title;
-                newNode.subgraphId = subgraph.id;
-                this._convertReadableToState(subgraph, flatGraphs, handleToNodeIdMap);
-                delete newNode.subgraph;
+                const subgraphData = readableNode.subgraph;
+                subgraphData.id = `graph_${internalNodeId}`;
+                subgraphData.name = readableNode.title;
+                newNode.subgraphId = subgraphData.id; // Set the link to the subgraph
+                
+                // Recurse to process the subgraph
+                this._convertReadableToState(subgraphData, flatGraphs, handleToNodeIdMap);
             }
             newGraph.nodes.push(newNode);
         });
