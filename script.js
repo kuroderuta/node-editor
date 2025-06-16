@@ -693,7 +693,7 @@ class NodeEditor {
     }
 
     /**
-     * UPDATED: Smart loader that detects file format (full, legacy simple, or new readable) and loads accordingly.
+     * UPDATED: Smart loader that detects file format and loads accordingly.
      */
     loadGraph(event) {
         const file = event.target.files[0];
@@ -707,10 +707,14 @@ class NodeEditor {
                 if (!loadedData) {
                     throw new Error("File is empty or invalid.");
                 }
+
+                // Check for the newest readable format (v3)
+                if (loadedData.format === "node-graph-v3-readable" && loadedData.graph) {
+                    this._loadReadableGraph(loadedData, 3);
                 
-                // Check for the new readable format first
-                if (loadedData.format === "node-graph-v2-readable" && loadedData.graph) {
-                    this._loadReadableGraph(loadedData);
+                // Check for the previous readable format (v2)
+                } else if (loadedData.format === "node-graph-v2-readable" && loadedData.graph) {
+                    this._loadReadableGraph(loadedData, 2);
                 
                 // Check for the original, detailed format
                 } else if (loadedData.graphs && loadedData.version) {
@@ -794,8 +798,7 @@ class NodeEditor {
     // ----- NEW READABLE & DATA-COMPLETE SAVE/LOAD -----
 
     /**
-     * REPLACED: Saves the graph to a new, human-readable JSON file that preserves all data.
-     * This format uses nested objects for subgraphs and readable string IDs for nodes.
+     * Saves the graph to the new, human-readable JSON file that preserves all data.
      */
     saveSimpleGraph() {
         const rootGraph = this.findGraphById('root');
@@ -814,7 +817,6 @@ class NodeEditor {
 
         const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}_readable.json`;
 
-        // 1. Create unique handles for every node across all graphs.
         const nodeIdToHandleMap = new Map();
         const usedHandles = new Set();
         Object.values(this.state.graphs).forEach(graph => {
@@ -826,11 +828,10 @@ class NodeEditor {
             });
         });
 
-        // 2. Recursively convert the entire graph structure.
-        const readableGraph = this._convertGraphToReadable(rootGraph.id, nodeIdToHandleMap);
+        const readableGraph = this._convertGraphToReadable(rootGraph.id, nodeIdToHandleMap, 3); // Specify v3
 
         const saveData = {
-            format: "node-graph-v2-readable", // Version identifier
+            format: "node-graph-v3-readable", // New version identifier
             title: rootGraph.name,
             graph: readableGraph
         };
@@ -845,28 +846,50 @@ class NodeEditor {
     }
 
     /**
-     * HELPER: Recursively converts a graph and its subgraphs into a nested, readable format.
+     * HELPER: Recursively converts a graph into a nested, readable format.
      */
-    _convertGraphToReadable(graphId, nodeIdToHandleMap) {
+    _convertGraphToReadable(graphId, nodeIdToHandleMap, version = 3) {
         const graph = this.findGraphById(graphId);
         if (!graph) return null;
 
         const readableGraph = {
-            id: graph.id,
-            name: graph.name,
-            pan: { ...graph.pan },
-            zoom: graph.zoom,
             nodes: [],
             connections: []
         };
+        
+        // Add legacy properties for v2 compatibility if needed during conversion
+        if (version === 2) {
+            readableGraph.id = graph.id;
+            readableGraph.name = graph.name;
+            readableGraph.pan = { ...graph.pan };
+            readableGraph.zoom = graph.zoom;
+        }
 
         readableGraph.nodes = graph.nodes.map(node => {
-            const readableNode = JSON.parse(JSON.stringify(node));
-            readableNode.id = nodeIdToHandleMap.get(node.id);
+            const handle = nodeIdToHandleMap.get(node.id);
+            const readableNode = {
+                id: handle,
+                title: node.title,
+                text: node.text,
+                color: node.color,
+                type: node.type,
+                inputs: node.inputs,
+                outputs: node.outputs,
+            };
 
-            if (readableNode.subgraphId) {
-                readableNode.subgraph = this._convertGraphToReadable(readableNode.subgraphId, nodeIdToHandleMap);
-                delete readableNode.subgraphId;
+            if (version === 3) {
+                 readableNode.position = { x: node.x, y: node.y };
+                 readableNode.size = { width: node.width, height: node.height };
+            } else { // v2
+                 readableNode.x = node.x;
+                 readableNode.y = node.y;
+                 readableNode.width = node.width;
+                 readableNode.height = node.height;
+            }
+
+
+            if (node.subgraphId) {
+                readableNode.subgraph = this._convertGraphToReadable(node.subgraphId, nodeIdToHandleMap, version);
             }
             return readableNode;
         });
@@ -876,75 +899,133 @@ class NodeEditor {
             const endNode = this.findNodeById(conn.end.nodeId, graph.id);
             if (!startNode || !endNode) return null;
 
-            return {
-                id: conn.id,
-                from: nodeIdToHandleMap.get(conn.start.nodeId),
-                from_pin: startNode.outputs[conn.start.index]?.name || `output_${conn.start.index}`,
-                to: nodeIdToHandleMap.get(conn.end.nodeId),
-                to_pin: endNode.inputs[conn.end.index]?.name || `input_${conn.end.index}`
-            };
+            const startHandle = nodeIdToHandleMap.get(conn.start.nodeId);
+            const endHandle = nodeIdToHandleMap.get(conn.end.nodeId);
+            const startPinName = startNode.outputs[conn.start.index]?.name || `output_${conn.start.index}`;
+            const endPinName = endNode.inputs[conn.end.index]?.name || `input_${conn.end.index}`;
+
+            if (version === 3) {
+                 return {
+                    from: `${startHandle}.outputs.${startPinName}`,
+                    to: `${endHandle}.inputs.${endPinName}`,
+                    id: conn.id // Retain original ID if present
+                };
+            } else { // v2
+                return {
+                    id: conn.id,
+                    from: startHandle,
+                    from_pin: startPinName,
+                    to: endHandle,
+                    to_pin: endPinName
+                };
+            }
         }).filter(Boolean);
 
         return readableGraph;
     }
     
     /**
-     * NEW: Loads a graph from the new human-readable format.
+     * Loads a graph from a readable format (v2 or v3).
      */
-    _loadReadableGraph(readableData) {
+    _loadReadableGraph(readableData, version) {
         this.resetState();
         const flatGraphs = {};
         const handleToNodeIdMap = new Map();
 
-        this._convertReadableToState(readableData.graph, flatGraphs, handleToNodeIdMap);
+        // The root graph in the new format doesn't have its own ID/name properties,
+        // so we create a root for our internal state.
+        const rootGraphInternalId = 'root';
+        this._convertReadableToState(readableData.graph, rootGraphInternalId, flatGraphs, handleToNodeIdMap, version);
         
         this.state.graphs = flatGraphs;
 
-        const rootGraph = this.findGraphById('root');
+        const rootGraph = this.findGraphById(rootGraphInternalId);
         if (rootGraph) {
             rootGraph.name = readableData.title || 'Loaded Graph';
+            // Set pan/zoom for root if it exists in the file (legacy v2)
+            if (readableData.graph.pan) rootGraph.pan = { ...readableData.graph.pan };
+            if (readableData.graph.zoom) rootGraph.zoom = readableData.graph.zoom;
         }
         
         this.render();
     }
 
     /**
-     * HELPER: Recursively traverses the readable graph format and flattens it into the editor's state.
+     * HELPER: Recursively flattens a readable graph into the editor's state.
      */
-    _convertReadableToState(readableGraph, flatGraphs, handleToNodeIdMap) {
+    _convertReadableToState(readableGraph, graphId, flatGraphs, handleToNodeIdMap, version) {
         const newGraph = {
-            id: readableGraph.id,
-            name: readableGraph.name,
-            pan: { ...readableGraph.pan },
-            zoom: readableGraph.zoom,
+            id: graphId,
+            name: readableGraph.name || 'Subgraph', // Name might not exist in v3
             nodes: [],
             connections: []
         };
 
+        // Set pan/zoom for subgraphs if they exist (legacy v2)
+        newGraph.pan = readableGraph.pan ? { ...readableGraph.pan } : {x:0, y:0};
+        newGraph.zoom = readableGraph.zoom || 1;
+
+
         readableGraph.nodes.forEach(readableNode => {
-            const newNode = JSON.parse(JSON.stringify(readableNode));
             const internalNodeId = `node_${this.state.nodeCounter++}`;
             handleToNodeIdMap.set(readableNode.id, internalNodeId);
-            newNode.id = internalNodeId;
 
-            if (newNode.subgraph) {
-                const subgraph = newNode.subgraph;
-                newNode.subgraphId = subgraph.id;
-                this._convertReadableToState(subgraph, flatGraphs, handleToNodeIdMap);
-                delete newNode.subgraph;
+            const newNode = {
+                id: internalNodeId,
+                title: readableNode.title,
+                text: readableNode.text,
+                color: readableNode.color,
+                type: readableNode.type,
+                inputs: readableNode.inputs,
+                outputs: readableNode.outputs,
+                subgraphId: null
+            };
+
+            if (version === 3) {
+                newNode.x = readableNode.position.x;
+                newNode.y = readableNode.position.y;
+                newNode.width = readableNode.size.width;
+                newNode.height = readableNode.size.height;
+            } else { // v2
+                newNode.x = readableNode.x;
+                newNode.y = readableNode.y;
+                newNode.width = readableNode.width;
+                newNode.height = readableNode.height;
+            }
+
+            if (readableNode.subgraph) {
+                const subgraph = readableNode.subgraph;
+                // v2 had explicit IDs, v3 does not, so we create one.
+                const subgraphId = subgraph.id || `graph_${internalNodeId}`;
+                newNode.subgraphId = subgraphId;
+                this._convertReadableToState(subgraph, subgraphId, flatGraphs, handleToNodeIdMap, version);
             }
             newGraph.nodes.push(newNode);
         });
 
         readableGraph.connections.forEach(readableConn => {
-            const startNodeId = handleToNodeIdMap.get(readableConn.from);
-            const endNodeId = handleToNodeIdMap.get(readableConn.to);
+            let startNodeId, endNodeId, startPinName, endPinName;
+
+            if (version === 3) {
+                const fromParts = readableConn.from.split('.');
+                const toParts = readableConn.to.split('.');
+                startNodeId = handleToNodeIdMap.get(fromParts[0]);
+                startPinName = fromParts.slice(2).join('.');
+                endNodeId = handleToNodeIdMap.get(toParts[0]);
+                endPinName = toParts.slice(2).join('.');
+            } else { // v2
+                startNodeId = handleToNodeIdMap.get(readableConn.from);
+                startPinName = readableConn.from_pin;
+                endNodeId = handleToNodeIdMap.get(readableConn.to);
+                endPinName = readableConn.to_pin;
+            }
+
             const startNode = newGraph.nodes.find(n => n.id === startNodeId);
             const endNode = newGraph.nodes.find(n => n.id === endNodeId);
 
             if (startNode && endNode) {
-                const startIndex = startNode.outputs.findIndex(o => o.name === readableConn.from_pin);
-                const endIndex = endNode.inputs.findIndex(i => i.name === readableConn.to_pin);
+                const startIndex = startNode.outputs.findIndex(o => o.name === startPinName);
+                const endIndex = endNode.inputs.findIndex(i => i.name === endPinName);
                 
                 if (startIndex !== -1 && endIndex !== -1) {
                     newGraph.connections.push({
@@ -958,6 +1039,7 @@ class NodeEditor {
         
         flatGraphs[newGraph.id] = newGraph;
     }
+
 
     // ----- LEGACY & UTILITY METHODS -----
     
