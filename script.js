@@ -160,7 +160,7 @@ class NodeEditor {
             this.startConnection(e);
         } else if (target === this.dom.canvas || target === this.dom.canvasContent) {
             if (e.button === 0) {
-                this.startSelection(coords);
+                this.startSelection(e, coords);
             } else if (e.button === 2) {
                 this.startPan(e);
             }
@@ -198,6 +198,10 @@ class NodeEditor {
         const mode = this.interaction.mode;
         if (!mode) return;
 
+        // Store pan start position for context menu check
+        const wasPanning = mode === 'pan';
+        const panStart = wasPanning ? this.interaction.data.panStart : null;
+
         switch (mode) {
             case 'pan':
                 this.dom.canvas.classList.remove('panning');
@@ -211,7 +215,16 @@ class NodeEditor {
         }
 
         this.interaction.mode = null;
-        this.interaction.data = {};
+        this.interaction.data = wasPanning ? { panStart } : {};
+        
+        // Clear pan start data after a brief delay
+        if (wasPanning) {
+            setTimeout(() => {
+                if (!this.interaction.mode) {
+                    this.interaction.data = {};
+                }
+            }, 100);
+        }
     }
 
     onClick(e) {
@@ -265,7 +278,16 @@ class NodeEditor {
 
     onContextMenu(e) {
         e.preventDefault();
+        
+        // Don't show context menu if we're panning or if mouse moved during right drag
         if (this.interaction.mode === 'pan') return;
+        
+        // Check if this is from a right-drag release (pan end)
+        if (this.interaction.data.panStart) {
+            const dx = Math.abs(e.clientX - this.interaction.data.panStart.x);
+            const dy = Math.abs(e.clientY - this.interaction.data.panStart.y);
+            if (dx > 4 || dy > 4) return;
+        }
 
         const menu = this.dom.contextMenu;
         menu.style.left = `${e.clientX}px`;
@@ -414,7 +436,8 @@ class NodeEditor {
             startX: e.clientX,
             startY: e.clientY,
             lastX: e.clientX,
-            lastY: e.clientY
+            lastY: e.clientY,
+            panStart: { x: e.clientX, y: e.clientY } // Store initial position for context menu check
         };
     }
 
@@ -431,7 +454,7 @@ class NodeEditor {
         this.renderCanvas();
     }
 
-    startSelection(coords) {
+    startSelection(e, coords) {
         if (!e.ctrlKey && !e.shiftKey) this.clearSelection();
         
         this.interaction.mode = 'select';
