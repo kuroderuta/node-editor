@@ -1,11 +1,16 @@
-const GRID_SIZE = 32;
-const NODE_MIN_WIDTH = 256;
-const NODE_MIN_HEIGHT = 128;
-const CONNECTION_POINT_Y_OFFSET = 32;
-const CONNECTION_POINT_Y_SPACING = 32;
-const ZOOM_SENSITIVITY = 0.1;
-const MAX_ZOOM = 4;
-const MIN_ZOOM = 0.25;
+// Constants
+const CONFIG = {
+    GRID_SIZE: 32,
+    NODE_MIN_WIDTH: 256,
+    NODE_MIN_HEIGHT: 128,
+    CONNECTION_OFFSET: 32,
+    CONNECTION_SPACING: 32,
+    ZOOM_SENSITIVITY: 0.1,
+    MAX_ZOOM: 4,
+    MIN_ZOOM: 0.25,
+    LAYOUT_PADDING_X: 350,
+    LAYOUT_PADDING_Y: 200
+};
 
 const COLORS = {
     default: '#666666',
@@ -20,528 +25,681 @@ const COLORS = {
 
 class NodeEditor {
     constructor(canvasId) {
-        this.canvas = document.getElementById(canvasId);
-        this.canvasContent = document.getElementById('canvasContent');
-        this.selectionBox = document.getElementById('selectionBox');
-        this.propertiesPanel = document.getElementById('propertiesPanel');
-        this.propertiesContent = document.getElementById('propertiesContent');
-        this.contextMenu = document.getElementById('contextMenu');
-        this.connectionContextMenu = document.getElementById('connectionContextMenu');
-
-        this.state = this.getInitialState();
-
-        this.interaction = {
-            isDragging: false,
-            isResizing: false,
-            isPanning: false,
-            isConnecting: false,
-            isSelecting: false,
-            didDrag: false,
-            draggedNodes: [],
-            resizeNode: null,
-            connectionStartPoint: null,
-            panStart: { x: 0, y: 0 },
-            selectionStart: { x: 0, y: 0 },
-            lastMousePosition: { x: 0, y: 0 },
+        // DOM elements
+        this.dom = {
+            canvas: document.getElementById(canvasId),
+            canvasContent: document.getElementById('canvasContent'),
+            selectionBox: document.getElementById('selectionBox'),
+            propertiesPanel: document.getElementById('propertiesPanel'),
+            propertiesContent: document.getElementById('propertiesContent'),
+            contextMenu: document.getElementById('contextMenu'),
+            connectionContextMenu: document.getElementById('connectionContextMenu'),
+            breadcrumbs: document.getElementById('breadcrumbs'),
+            selectedCount: document.getElementById('selectedCount'),
+            copyBtn: document.getElementById('copyBtn'),
+            pasteBtn: document.getElementById('pasteBtn'),
+            deleteBtn: document.getElementById('deleteBtn')
         };
 
-        this.initialize();
+        // Initialize state
+        this.resetState();
+        
+        // Interaction state
+        this.interaction = {
+            mode: null, // 'drag', 'resize', 'pan', 'connect', 'select'
+            data: {},
+            didMove: false
+        };
+
+        this.init();
     }
 
-    initialize() {
-        this.resetState();
-        this._bindEventListeners();
+    init() {
+        this.bindEvents();
         this.render();
     }
 
-    getInitialState() {
-        const masterGraph = {
+    resetState() {
+        const rootGraph = {
             id: 'root',
+            name: 'Root',
             nodes: [],
             connections: [],
-            name: 'Root',
             pan: { x: 0, y: 0 },
             zoom: 1
         };
 
-        return {
-            graphs: { 'root': masterGraph },
+        this.state = {
+            graphs: { root: rootGraph },
             navigationStack: ['root'],
             nodeCounter: 1,
             selectedNodeIds: new Set(),
             copiedNodes: [],
-            contextMenuTarget: null,
-            selectedConnectionId: null,
+            contextMenuPos: null,
+            selectedConnectionId: null
         };
     }
 
-    resetState() {
-        this.state = this.getInitialState();
+    // ===== Getters & Utilities =====
+    
+    get currentGraph() {
+        return this.state.graphs[this.state.navigationStack.at(-1)];
     }
 
-    _bindEventListeners() {
-        this.canvas.addEventListener('mousedown', this._onCanvasMouseDown.bind(this));
-        this.canvas.addEventListener('wheel', this._onCanvasWheel.bind(this));
-        this.canvas.addEventListener('contextmenu', this._onCanvasContextMenu.bind(this));
-
-        this.canvasContent.addEventListener('input', this._onCanvasContentInput.bind(this));
-
-        document.addEventListener('mousemove', this._onMouseMove.bind(this));
-        document.addEventListener('mouseup', this._onMouseUp.bind(this));
-        document.addEventListener('click', this._onGlobalClick.bind(this));
-        document.addEventListener('keydown', this._onKeyDown.bind(this));
-
-        document.getElementById('addNodeBtn').addEventListener('click', () => this.addNode());
-        document.getElementById('saveBtn').addEventListener('click', () => this.saveGraph());
-        document.getElementById('saveSimpleBtn').addEventListener('click', () => this.saveSimpleGraph());
-        document.getElementById('loadBtn').addEventListener('click', () => document.getElementById('loadFile').click());
-        document.getElementById('loadFile').addEventListener('change', (e) => this.loadGraph(e));
-        document.getElementById('copyBtn').addEventListener('click', () => this.copySelectedNodes());
-        document.getElementById('pasteBtn').addEventListener('click', () => this.pasteNodes());
-        document.getElementById('deleteBtn').addEventListener('click', () => this.deleteSelected());
-
-        this.contextMenu.addEventListener('click', this._onContextMenuClick.bind(this));
-        this.connectionContextMenu.addEventListener('click', this._onContextMenuClick.bind(this));
+    findNode(nodeId, graphId = null) {
+        const graph = graphId ? this.state.graphs[graphId] : this.currentGraph;
+        return graph?.nodes.find(n => n.id === nodeId);
     }
 
-    getCurrentGraph() {
-        const currentGraphId = this.state.navigationStack[this.state.navigationStack.length - 1];
-        return this.state.graphs[currentGraphId];
+    getCanvasCoords(clientX, clientY) {
+        const rect = this.dom.canvas.getBoundingClientRect();
+        const g = this.currentGraph;
+        return {
+            x: (clientX - rect.left - g.pan.x) / g.zoom,
+            y: (clientY - rect.top - g.pan.y) / g.zoom
+        };
     }
 
-    findNodeById(nodeId, graphId = null) {
-        const graph = graphId ? this.state.graphs[graphId] : this.getCurrentGraph();
-        return graph ? graph.nodes.find(n => n.id === nodeId) : undefined;
+    snap(value) {
+        return Math.round(value / CONFIG.GRID_SIZE) * CONFIG.GRID_SIZE;
     }
 
-    findGraphById(graphId) {
-        return this.state.graphs[graphId];
-    }
+    // ===== Event Binding =====
+    
+    bindEvents() {
+        // Canvas events
+        const canvas = this.dom.canvas;
+        canvas.addEventListener('mousedown', e => this.onMouseDown(e));
+        canvas.addEventListener('wheel', e => this.onWheel(e));
+        canvas.addEventListener('contextmenu', e => this.onContextMenu(e));
 
-    render() {
-        this._renderCanvas();
-        this._renderToolbar();
-        this._renderPropertiesPanel();
-    }
+        // Global events
+        document.addEventListener('mousemove', e => this.onMouseMove(e));
+        document.addEventListener('mouseup', e => this.onMouseUp(e));
+        document.addEventListener('click', e => this.onClick(e));
+        document.addEventListener('keydown', e => this.onKeyDown(e));
 
-    _renderCanvas() {
-        const graph = this.getCurrentGraph();
-
-        const textScrolls = {};
-        this.canvasContent.querySelectorAll('.node-text').forEach(ta => {
-            const nodeId = ta.closest('.node').dataset.nodeId;
-            textScrolls[nodeId] = { top: ta.scrollTop, left: ta.scrollLeft };
-        });
-
-        this.canvasContent.innerHTML = '<div class="selection-box" id="selectionBox"></div>';
-        this.selectionBox = document.getElementById('selectionBox');
-
-        const transform = `translate(${graph.pan.x}px, ${graph.pan.y}px) scale(${graph.zoom})`;
-        this.canvasContent.style.transform = transform;
-
-        const gridSize = GRID_SIZE * graph.zoom;
-        this.canvas.style.backgroundSize = `${gridSize}px ${gridSize}px`;
-        this.canvas.style.backgroundPosition = `${graph.pan.x % gridSize}px ${graph.pan.y % gridSize}px`;
-
-        graph.nodes.forEach(nodeData => this._renderNode(nodeData));
-        graph.connections.forEach(connData => this._renderConnection(connData));
-
-        Object.keys(textScrolls).forEach(nodeId => {
-            const textarea = this.canvasContent.querySelector(`[data-node-id="${nodeId}"] .node-text`);
-            if (textarea) {
-                textarea.scrollTop = textScrolls[nodeId].top;
-                textarea.scrollLeft = textScrolls[nodeId].left;
+        // Input events
+        this.dom.canvasContent.addEventListener('input', e => {
+            if (e.target.classList.contains('node-text')) {
+                const nodeId = e.target.closest('.node')?.dataset.nodeId;
+                if (nodeId) this.updateNodeProp(nodeId, 'text', e.target.value, e.target);
             }
         });
+
+        // Button events
+        document.getElementById('addNodeBtn').onclick = () => this.addNode();
+        document.getElementById('saveBtn').onclick = () => this.saveGraph();
+        document.getElementById('saveSimpleBtn').onclick = () => this.saveSimpleGraph();
+        document.getElementById('loadBtn').onclick = () => document.getElementById('loadFile').click();
+        document.getElementById('loadFile').onchange = e => this.loadGraph(e);
+        this.dom.copyBtn.onclick = () => this.copySelected();
+        this.dom.pasteBtn.onclick = () => this.pasteNodes();
+        this.dom.deleteBtn.onclick = () => this.deleteSelected();
+
+        // Context menu events
+        [this.dom.contextMenu, this.dom.connectionContextMenu].forEach(menu => {
+            menu.onclick = e => this.onContextMenuClick(e);
+        });
     }
 
-    _renderNode(nodeData) {
-        const nodeEl = document.createElement('div');
-        const isSelected = this.state.selectedNodeIds.has(nodeData.id);
-        const hasSubgraph = nodeData.subgraphId && this.findGraphById(nodeData.subgraphId)?.nodes.length > 0;
+    // ===== Mouse Events =====
+    
+    onMouseDown(e) {
+        this.interaction.didMove = false;
+        const target = e.target;
+        const coords = this.getCanvasCoords(e.clientX, e.clientY);
 
-        nodeEl.className = `node color-${nodeData.color} ${isSelected ? 'selected' : ''} ${hasSubgraph ? 'has-subgraph' : ''}`;
-        nodeEl.dataset.nodeId = nodeData.id;
-        nodeEl.style.left = `${nodeData.x}px`;
-        nodeEl.style.top = `${nodeData.y}px`;
-        nodeEl.style.width = `${nodeData.width}px`;
-        nodeEl.style.height = `${nodeData.height}px`;
+        if (target.classList.contains('node-header') || 
+            target.classList.contains('node-content') || 
+            target.classList.contains('node-text')) {
+            this.startDrag(e);
+        } else if (target.classList.contains('resize-handle')) {
+            this.startResize(e);
+        } else if (target.classList.contains('connection-point')) {
+            this.startConnection(e);
+        } else if (target === this.dom.canvas || target === this.dom.canvasContent) {
+            if (e.button === 0) {
+                this.startSelection(coords);
+            } else if (e.button === 2) {
+                this.startPan(e);
+            }
+        }
+    }
 
-        let textContentHTML = '';
-        if (nodeData.type === 'default') {
-            textContentHTML = `<textarea class="node-text" placeholder="Enter text...">${nodeData.text}</textarea>`;
+    onMouseMove(e) {
+        const mode = this.interaction.mode;
+        if (!mode) return;
+
+        this.interaction.didMove = true;
+        const coords = this.getCanvasCoords(e.clientX, e.clientY);
+        const data = this.interaction.data;
+
+        switch (mode) {
+            case 'drag':
+                this.updateDrag(coords);
+                break;
+            case 'resize':
+                this.updateResize(e);
+                break;
+            case 'pan':
+                this.updatePan(e);
+                break;
+            case 'select':
+                this.updateSelection(coords);
+                break;
+            case 'connect':
+                this.updateConnection(coords);
+                break;
+        }
+    }
+
+    onMouseUp(e) {
+        const mode = this.interaction.mode;
+        if (!mode) return;
+
+        switch (mode) {
+            case 'pan':
+                this.dom.canvas.classList.remove('panning');
+                break;
+            case 'select':
+                this.finishSelection();
+                break;
+            case 'connect':
+                this.finishConnection(e);
+                break;
         }
 
-        let innerHTML = `
-            <div class="node-header">${nodeData.title}</div>
-            <div class="node-content">
-                ${textContentHTML}
-            </div>
-        `;
+        this.interaction.mode = null;
+        this.interaction.data = {};
+    }
 
-        if (nodeData.type === 'default') {
-            innerHTML += `<div class="resize-handle" data-node-id="${nodeData.id}"></div>`;
+    onClick(e) {
+        if (this.interaction.didMove) return;
+
+        // Hide menus
+        if (!this.dom.contextMenu.contains(e.target)) this.dom.contextMenu.style.display = 'none';
+        if (!this.dom.connectionContextMenu.contains(e.target)) this.dom.connectionContextMenu.style.display = 'none';
+
+        // Handle clicks
+        const target = e.target;
+        
+        if (target === this.dom.canvas || target === this.dom.canvasContent) {
+            this.clearSelection();
+            return;
         }
 
-        nodeEl.innerHTML = innerHTML;
-        this.canvasContent.appendChild(nodeEl);
-
-        this._renderNodeConnectionPoints(nodeEl, nodeData);
-    }
-
-    _renderNodeConnectionPoints(nodeEl, nodeData) {
-        const createPoint = (pointData, type, index) => {
-            const yPos = CONNECTION_POINT_Y_OFFSET + (index * CONNECTION_POINT_Y_SPACING);
-            const point = document.createElement('div');
-            point.className = `connection-point ${type}`;
-            point.dataset.nodeId = nodeData.id;
-            point.dataset.type = type;
-            point.dataset.index = index;
-            point.style.top = `${yPos}px`;
-            point.style.backgroundColor = pointData.color;
-
-            const label = document.createElement('div');
-            label.className = 'connection-point-label';
-            label.textContent = pointData.name;
-            label.style.top = `${yPos}px`;
-
-            nodeEl.appendChild(point);
-            nodeEl.appendChild(label);
-        };
-
-        nodeData.inputs.forEach((input, i) => createPoint(input, 'input', i));
-        nodeData.outputs.forEach((output, i) => createPoint(output, 'output', i));
-
-        const maxIO = Math.max(nodeData.inputs.length, nodeData.outputs.length);
-        const contentMinHeight = (maxIO > 0) ? (maxIO * CONNECTION_POINT_Y_SPACING + 16) : 0;
-        nodeEl.querySelector('.node-content').style.minHeight = `${contentMinHeight}px`;
-    }
-
-    _renderConnection(connData) {
-        const startNode = this.findNodeById(connData.start.nodeId);
-        const endNode = this.findNodeById(connData.end.nodeId);
-
-        if (!startNode || !endNode) return;
-
-        const startNodeEl = this.canvasContent.querySelector(`[data-node-id="${startNode.id}"]`);
-        const endNodeEl = this.canvasContent.querySelector(`[data-node-id="${endNode.id}"]`);
-
-        if (!startNodeEl || !endNodeEl) return;
-
-        const startColor = startNode.outputs[connData.start.index]?.color || COLORS.default;
-        const endColor = endNode.inputs[connData.end.index]?.color || COLORS.default;
-
-        const line = document.createElement('div');
-        line.className = 'connection-line';
-        line.dataset.connectionId = connData.id;
-
-        const svgNS = "http://www.w3.org/2000/svg";
-        const svg = document.createElementNS(svgNS, 'svg');
-        const defs = document.createElementNS(svgNS, 'defs');
-        const gradient = document.createElementNS(svgNS, 'linearGradient');
-        const stop1 = document.createElementNS(svgNS, 'stop');
-        const stop2 = document.createElementNS(svgNS, 'stop');
-        const path = document.createElementNS(svgNS, 'path');
-
-        const gradId = `grad_${connData.id}`;
-        gradient.setAttribute('id', gradId);
-        gradient.setAttribute('gradientUnits', 'userSpaceOnUse');
-
-        stop1.setAttribute('offset', '0%');
-        stop1.style.stopColor = startColor;
-        stop2.setAttribute('offset', '100%');
-        stop2.style.stopColor = endColor;
-
-        path.setAttribute('stroke', `url(#${gradId})`);
-        path.dataset.connectionId = connData.id;
-
-        gradient.appendChild(stop1);
-        gradient.appendChild(stop2);
-        defs.appendChild(gradient);
-        svg.appendChild(defs);
-        svg.appendChild(path);
-        line.appendChild(svg);
-        this.canvasContent.appendChild(line);
-
-        this.updateConnectionPath(connData.id);
-    }
-
-    _renderToolbar() {
-        document.getElementById('copyBtn').disabled = this.state.selectedNodeIds.size === 0;
-        document.getElementById('pasteBtn').disabled = this.state.copiedNodes.length === 0;
-        document.getElementById('deleteBtn').disabled = this.state.selectedNodeIds.size === 0;
-
-        const count = this.state.selectedNodeIds.size;
-        const countEl = document.getElementById('selectedCount');
-        countEl.textContent = count > 0 ? `${count} node${count > 1 ? 's' : ''} selected` : '';
-
-        const breadcrumbsContainer = document.getElementById('breadcrumbs');
-        breadcrumbsContainer.innerHTML = '';
-        this.state.navigationStack.forEach((graphId, index) => {
-            const graph = this.findGraphById(graphId);
-            if (!graph) return;
-
-            const isLast = index === this.state.navigationStack.length - 1;
-
-            if (graphId === 'root' && isLast) {
-                const input = document.createElement('input');
-                input.type = 'text';
-                input.className = 'breadcrumb-input';
-                input.value = graph.name;
-
-                input.oninput = (e) => {
-                    const rootGraph = this.findGraphById('root');
-                    if (rootGraph) {
-                        rootGraph.name = e.target.value;
-                    }
-                };
-
-                input.onchange = (e) => {
-                    const rootGraph = this.findGraphById('root');
-                    if (rootGraph && rootGraph.name.trim() === '') {
-                        rootGraph.name = 'Root';
-                        e.target.value = 'Root';
-                    }
-                };
-                breadcrumbsContainer.appendChild(input);
-
+        const node = target.closest('.node');
+        if (node && !target.classList.contains('node-text')) {
+            const nodeId = node.dataset.nodeId;
+            if (e.detail === 2) {
+                this.enterNode(nodeId);
             } else {
-                const item = document.createElement('span');
-                item.textContent = graph.name;
-                item.className = 'breadcrumb-item';
-
-                if (isLast) {
-                    item.classList.add('active');
-                } else {
-                    item.onclick = () => this.navigateToLevel(index);
-                }
-                breadcrumbsContainer.appendChild(item);
+                this.selectNode(nodeId, e.ctrlKey || e.shiftKey);
             }
+            return;
+        }
 
-            if (!isLast) {
-                const separator = document.createElement('span');
-                separator.className = 'breadcrumb-separator';
-                separator.textContent = '>';
-                breadcrumbsContainer.appendChild(separator);
+        const path = target.closest('path[data-connection-id]');
+        if (path) {
+            this.showConnectionMenu(path.dataset.connectionId, e);
+        }
+    }
+
+    onWheel(e) {
+        e.preventDefault();
+        const graph = this.currentGraph;
+        const rect = this.dom.canvas.getBoundingClientRect();
+        const mouse = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+
+        const oldZoom = graph.zoom;
+        const delta = e.deltaY < 0 ? CONFIG.ZOOM_SENSITIVITY : -CONFIG.ZOOM_SENSITIVITY;
+        graph.zoom = Math.max(CONFIG.MIN_ZOOM, Math.min(CONFIG.MAX_ZOOM, oldZoom + delta));
+
+        const scale = graph.zoom / oldZoom;
+        graph.pan.x = mouse.x - (mouse.x - graph.pan.x) * scale;
+        graph.pan.y = mouse.y - (mouse.y - graph.pan.y) * scale;
+
+        this.renderCanvas();
+    }
+
+    onContextMenu(e) {
+        e.preventDefault();
+        if (this.interaction.mode === 'pan') return;
+
+        const menu = this.dom.contextMenu;
+        menu.style.left = `${e.clientX}px`;
+        menu.style.top = `${e.clientY}px`;
+        menu.style.display = 'block';
+
+        this.state.contextMenuPos = this.getCanvasCoords(e.clientX, e.clientY);
+
+        const atRoot = this.state.navigationStack.length === 1;
+        menu.querySelector('[data-action="add-graph-input"]').classList.toggle('disabled', atRoot);
+        menu.querySelector('[data-action="add-graph-output"]').classList.toggle('disabled', atRoot);
+    }
+
+    onContextMenuClick(e) {
+        const action = e.target.dataset.action;
+        if (!action || e.target.classList.contains('disabled')) return;
+
+        switch (action) {
+            case 'add-node':
+                this.addNode('default', this.state.contextMenuPos);
+                break;
+            case 'add-graph-input':
+                this.addNode('graph-input', this.state.contextMenuPos);
+                break;
+            case 'add-graph-output':
+                this.addNode('graph-output', this.state.contextMenuPos);
+                break;
+            case 'delete-connection':
+                this.deleteConnection(this.state.selectedConnectionId);
+                break;
+        }
+
+        this.dom.contextMenu.style.display = 'none';
+        this.dom.connectionContextMenu.style.display = 'none';
+    }
+
+    onKeyDown(e) {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+        const ctrl = e.ctrlKey || e.metaKey;
+        
+        if (ctrl) {
+            switch (e.key.toLowerCase()) {
+                case 'c': e.preventDefault(); this.copySelected(); break;
+                case 'v': e.preventDefault(); this.pasteNodes(); break;
+                case 'a': 
+                    e.preventDefault();
+                    this.currentGraph.nodes.forEach(n => this.state.selectedNodeIds.add(n.id));
+                    this.render();
+                    break;
+            }
+        } else if (e.key === 'Delete' || e.key === 'Backspace') {
+            this.deleteSelected();
+        } else if (e.key === 'Escape') {
+            this.clearSelection();
+        }
+    }
+
+    // ===== Interaction Handlers =====
+    
+    startDrag(e) {
+        if (e.target.classList.contains('node-text')) return;
+        
+        e.stopPropagation();
+        const nodeId = e.target.closest('.node').dataset.nodeId;
+        const coords = this.getCanvasCoords(e.clientX, e.clientY);
+
+        // Update selection if needed
+        if (!this.state.selectedNodeIds.has(nodeId)) {
+            if (!e.ctrlKey && !e.shiftKey) this.state.selectedNodeIds.clear();
+            this.state.selectedNodeIds.add(nodeId);
+            this.render();
+        }
+
+        // Prepare drag data
+        const dragNodes = [];
+        this.state.selectedNodeIds.forEach(id => {
+            const node = this.findNode(id);
+            if (node) {
+                dragNodes.push({
+                    id,
+                    offsetX: coords.x - node.x,
+                    offsetY: coords.y - node.y
+                });
             }
         });
+
+        this.interaction.mode = 'drag';
+        this.interaction.data = { nodes: dragNodes };
     }
 
-    _renderPropertiesPanel() {
-        if (this.state.selectedNodeIds.size === 0) {
-            this.propertiesPanel.classList.remove('show');
-            return;
-        }
+    updateDrag(coords) {
+        this.interaction.data.nodes.forEach(({ id, offsetX, offsetY }) => {
+            const node = this.findNode(id);
+            if (!node) return;
 
-        this.propertiesPanel.classList.add('show');
-        let html = '';
+            node.x = this.snap(coords.x - offsetX);
+            node.y = this.snap(coords.y - offsetY);
 
-        if (this.state.selectedNodeIds.size > 1) {
-            html = `<p>${this.state.selectedNodeIds.size} nodes selected</p>`;
-        } else {
-            const nodeId = this.state.selectedNodeIds.values().next().value;
-            const nodeData = this.findNodeById(nodeId);
-            if (!nodeData) return;
-
-            const isIoNode = nodeData.type === 'graph-input' || nodeData.type === 'graph-output';
-
-            const textContentHTML = !isIoNode ? `
-                <div class="property-group">
-                    <label>Text Content:</label>
-                    <textarea id="propNodeContent" rows="4" data-node-id="${nodeId}">${nodeData.text}</textarea>
-                </div>
-            ` : '';
-
-            html = `
-                <div class="property-group">
-                    <label>Node Title:</label>
-                    <input type="text" id="propNodeTitle" value="${nodeData.title}" data-node-id="${nodeId}">
-                </div>
-                ${textContentHTML}
-                <div class="property-group">
-                    <label>Node Color:</label>
-                    <div class="color-options">
-                        ${Object.keys(COLORS).map(color => `
-                            <div class="color-option ${color} ${nodeData.color === color ? 'selected' : ''}" 
-                                 onclick="window.nodeEditor.setNodeColor('${nodeId}', '${color}')"></div>
-                        `).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        this.propertiesContent.innerHTML = html;
-
-        const titleInput = document.getElementById('propNodeTitle');
-        const contentInput = document.getElementById('propNodeContent');
-        if (titleInput) {
-            titleInput.addEventListener('input', (e) => this.updateNodeProperty(e.target.dataset.nodeId, 'title', e.target.value, e.target));
-        }
-        if (contentInput) {
-            contentInput.addEventListener('input', (e) => this.updateNodeProperty(e.target.dataset.nodeId, 'text', e.target.value, e.target));
-        }
+            const el = this.dom.canvasContent.querySelector(`[data-node-id="${id}"]`);
+            el.style.left = `${node.x}px`;
+            el.style.top = `${node.y}px`;
+        });
+        this.updateConnectionPaths();
     }
 
-    updateConnectionPath(connectionId) {
-        const graph = this.getCurrentGraph();
-        const connection = graph.connections.find(c => c.id === connectionId);
-        if (!connection) return;
+    startResize(e) {
+        e.stopPropagation();
+        const nodeId = e.target.dataset.nodeId;
+        const node = this.findNode(nodeId);
 
-        const line = this.canvasContent.querySelector(`.connection-line[data-connection-id="${connectionId}"]`);
+        this.interaction.mode = 'resize';
+        this.interaction.data = {
+            nodeId,
+            startWidth: node.width,
+            startHeight: node.height,
+            startX: e.clientX,
+            startY: e.clientY
+        };
+    }
+
+    updateResize(e) {
+        const data = this.interaction.data;
+        const node = this.findNode(data.nodeId);
+        const graph = this.currentGraph;
+
+        const dx = (e.clientX - data.startX) / graph.zoom;
+        const dy = (e.clientY - data.startY) / graph.zoom;
+
+        node.width = this.snap(Math.max(CONFIG.NODE_MIN_WIDTH, data.startWidth + dx));
+        node.height = this.snap(Math.max(CONFIG.NODE_MIN_HEIGHT, data.startHeight + dy));
+
+        const el = this.dom.canvasContent.querySelector(`[data-node-id="${data.nodeId}"]`);
+        el.style.width = `${node.width}px`;
+        el.style.height = `${node.height}px`;
+        
+        this.updateConnectionPaths();
+    }
+
+    startPan(e) {
+        e.preventDefault();
+        this.dom.canvas.classList.add('panning');
+        
+        this.interaction.mode = 'pan';
+        this.interaction.data = {
+            startX: e.clientX,
+            startY: e.clientY,
+            lastX: e.clientX,
+            lastY: e.clientY
+        };
+    }
+
+    updatePan(e) {
+        const data = this.interaction.data;
+        const graph = this.currentGraph;
+        
+        graph.pan.x += e.clientX - data.lastX;
+        graph.pan.y += e.clientY - data.lastY;
+        
+        data.lastX = e.clientX;
+        data.lastY = e.clientY;
+        
+        this.renderCanvas();
+    }
+
+    startSelection(coords) {
+        if (!e.ctrlKey && !e.shiftKey) this.clearSelection();
+        
+        this.interaction.mode = 'select';
+        this.interaction.data = { start: coords };
+        
+        const box = this.dom.selectionBox;
+        box.style.left = `${coords.x}px`;
+        box.style.top = `${coords.y}px`;
+        box.style.width = '0px';
+        box.style.height = '0px';
+        box.style.display = 'block';
+    }
+
+    updateSelection(coords) {
+        const start = this.interaction.data.start;
+        const box = this.dom.selectionBox;
+        
+        box.style.left = `${Math.min(start.x, coords.x)}px`;
+        box.style.top = `${Math.min(start.y, coords.y)}px`;
+        box.style.width = `${Math.abs(coords.x - start.x)}px`;
+        box.style.height = `${Math.abs(coords.y - start.y)}px`;
+    }
+
+    finishSelection() {
+        const box = this.dom.selectionBox;
+        box.style.display = 'none';
+        
+        const rect = {
+            left: parseInt(box.style.left),
+            top: parseInt(box.style.top),
+            right: parseInt(box.style.left) + parseInt(box.style.width),
+            bottom: parseInt(box.style.top) + parseInt(box.style.height)
+        };
+        
+        this.currentGraph.nodes.forEach(node => {
+            if (rect.right > node.x && rect.left < node.x + node.width &&
+                rect.bottom > node.y && rect.top < node.y + node.height) {
+                this.state.selectedNodeIds.add(node.id);
+            }
+        });
+        
+        this.render();
+    }
+
+    startConnection(e) {
+        e.stopPropagation();
+        const point = e.target;
+        
+        this.interaction.mode = 'connect';
+        this.interaction.data = {
+            nodeId: point.dataset.nodeId,
+            type: point.dataset.type,
+            index: parseInt(point.dataset.index)
+        };
+        
+        const line = document.createElement('div');
+        line.className = 'connection-line active';
+        line.innerHTML = '<svg><path style="stroke:#4a9eff; stroke-width:4; fill:none;"></path></svg>';
+        this.dom.canvasContent.appendChild(line);
+    }
+
+    updateConnection(coords) {
+        const line = this.dom.canvasContent.querySelector('.connection-line.active');
         if (!line) return;
-
-        const startNodeEl = this.canvasContent.querySelector(`[data-node-id="${connection.start.nodeId}"]`);
-        const endNodeEl = this.canvasContent.querySelector(`[data-node-id="${connection.end.nodeId}"]`);
-
-        if (!startNodeEl || !endNodeEl) {
-            line.remove();
-            return;
-        }
-
-        const startNodeData = this.findNodeById(connection.start.nodeId);
-
-        const startX = startNodeData.x + startNodeEl.offsetWidth;
-        const startY = startNodeData.y + CONNECTION_POINT_Y_OFFSET + (connection.start.index * CONNECTION_POINT_Y_SPACING) + 8;
-        const endX = this.findNodeById(connection.end.nodeId).x;
-        const endY = this.findNodeById(connection.end.nodeId).y + CONNECTION_POINT_Y_OFFSET + (connection.end.index * CONNECTION_POINT_Y_SPACING) + 8;
-
+        
+        const data = this.interaction.data;
+        const node = this.findNode(data.nodeId);
+        const nodeEl = this.dom.canvasContent.querySelector(`[data-node-id="${data.nodeId}"]`);
+        
+        const x1 = node.x + (data.type === 'output' ? nodeEl.offsetWidth : 0);
+        const y1 = node.y + CONFIG.CONNECTION_OFFSET + (data.index * CONFIG.CONNECTION_SPACING) + 8;
+        
         const path = line.querySelector('path');
-        const controlOffset = Math.abs(endX - startX) * 0.5;
-        const pathData = `M ${startX} ${startY} C ${startX + controlOffset} ${startY} ${endX - controlOffset} ${endY} ${endX} ${endY}`;
-        path.setAttribute('d', pathData);
+        const ctrl = Math.abs(coords.x - x1) * 0.5;
+        path.setAttribute('d', `M ${x1} ${y1} C ${x1 + ctrl} ${y1} ${coords.x - ctrl} ${coords.y} ${coords.x} ${coords.y}`);
+    }
 
-        const gradient = line.querySelector('linearGradient');
-        if (gradient) {
-            gradient.setAttribute('x1', startX);
-            gradient.setAttribute('y1', startY);
-            gradient.setAttribute('x2', endX);
-            gradient.setAttribute('y2', endY);
+    finishConnection(e) {
+        const line = this.dom.canvasContent.querySelector('.connection-line.active');
+        if (line) line.remove();
+        
+        const target = e.target;
+        if (!target.classList.contains('connection-point')) return;
+        
+        const start = this.interaction.data;
+        const end = {
+            nodeId: target.dataset.nodeId,
+            type: target.dataset.type,
+            index: parseInt(target.dataset.index)
+        };
+        
+        // Validate connection
+        if (start.nodeId === end.nodeId || start.type === end.type) return;
+        
+        const output = start.type === 'output' ? start : end;
+        const input = start.type === 'input' ? start : end;
+        
+        // Check for duplicates
+        const exists = this.currentGraph.connections.some(c =>
+            c.start.nodeId === output.nodeId && c.start.index === output.index &&
+            c.end.nodeId === input.nodeId && c.end.index === input.index
+        );
+        
+        if (!exists) {
+            this.currentGraph.connections.push({
+                id: `conn_${Date.now()}`,
+                start: { nodeId: output.nodeId, index: output.index },
+                end: { nodeId: input.nodeId, index: input.index }
+            });
+            this.render();
         }
     }
 
-    updateAllConnectionPaths() {
-        const graph = this.getCurrentGraph();
-        graph.connections.forEach(conn => this.updateConnectionPath(conn.id));
-    }
-
-    getCanvasCoordinates(clientX, clientY) {
-        const graph = this.getCurrentGraph();
-        const canvasRect = this.canvas.getBoundingClientRect();
-        const x = (clientX - canvasRect.left - graph.pan.x) / graph.zoom;
-        const y = (clientY - canvasRect.top - graph.pan.y) / graph.zoom;
-        return { x, y };
-    }
-
-    snapToGrid(value) {
-        return Math.round(value / GRID_SIZE) * GRID_SIZE;
-    }
-
-    _updateParentNodeInterface() {
-        if (this.state.navigationStack.length <= 1) return;
-
-        const currentGraphId = this.state.navigationStack[this.state.navigationStack.length - 1];
-        const parentGraphId = this.state.navigationStack[this.state.navigationStack.length - 2];
-        const parentGraph = this.findGraphById(parentGraphId);
-
-        const parentNodeData = parentGraph.nodes.find(n => n.subgraphId === currentGraphId);
-        if (!parentNodeData) return;
-
-        const currentGraph = this.findGraphById(currentGraphId);
-        const graphInputs = currentGraph.nodes.filter(n => n.type === 'graph-input');
-        const graphOutputs = currentGraph.nodes.filter(n => n.type === 'graph-output');
-
-        parentNodeData.inputs = graphInputs.map(inputNode => ({
-            name: inputNode.title,
-            color: COLORS[inputNode.color] || COLORS.default
-        }));
-        parentNodeData.outputs = graphOutputs.map(outputNode => ({
-            name: outputNode.title,
-            color: COLORS[outputNode.color] || COLORS.default
-        }));
-    }
-
+    // ===== Node Operations =====
+    
     addNode(type = 'default', position = null) {
-        const graph = this.getCurrentGraph();
-
+        const graph = this.currentGraph;
+        
         if (!position) {
-            const center = this.getCanvasCoordinates(this.canvas.clientWidth / 2, this.canvas.clientHeight / 2);
-            position = { x: center.x, y: center.y };
+            const center = this.getCanvasCoords(
+                this.dom.canvas.clientWidth / 2,
+                this.dom.canvas.clientHeight / 2
+            );
+            position = center;
         }
-
+        
         const nodeId = `node_${this.state.nodeCounter++}`;
-        const nodeData = {
+        const node = {
             id: nodeId,
-            x: this.snapToGrid(position.x),
-            y: this.snapToGrid(position.y),
-            width: NODE_MIN_WIDTH,
-            height: NODE_MIN_HEIGHT,
+            x: this.snap(position.x),
+            y: this.snap(position.y),
+            width: CONFIG.NODE_MIN_WIDTH,
+            height: CONFIG.NODE_MIN_HEIGHT,
             color: 'default',
             type: type,
+            text: '',
+            title: '',
             inputs: [],
             outputs: [],
-            subgraphId: null,
-            text: '',
+            subgraphId: null
         };
-
+        
+        // Configure node by type
         switch (type) {
             case 'default':
-                nodeData.title = `Node ${this.state.nodeCounter - 1}`;
-                const subgraph = {
-                    id: `graph_${nodeId}`,
-                    name: nodeData.title,
+                node.title = `Node ${this.state.nodeCounter - 1}`;
+                const subgraphId = `graph_${nodeId}`;
+                node.subgraphId = subgraphId;
+                this.state.graphs[subgraphId] = {
+                    id: subgraphId,
+                    name: node.title,
                     nodes: [],
                     connections: [],
                     pan: { x: 0, y: 0 },
-                    zoom: 1,
+                    zoom: 1
                 };
-                this.state.graphs[subgraph.id] = subgraph;
-                nodeData.subgraphId = subgraph.id;
                 break;
             case 'graph-input':
-                nodeData.title = 'Input';
-                nodeData.color = 'cyan';
-                nodeData.outputs = [{ name: 'Value', color: COLORS.cyan }];
+                node.title = 'Input';
+                node.color = 'cyan';
+                node.outputs = [{ name: 'Value', color: COLORS.cyan }];
                 break;
             case 'graph-output':
-                nodeData.title = 'Output';
-                nodeData.color = 'orange';
-                nodeData.inputs = [{ name: 'Value', color: COLORS.orange }];
+                node.title = 'Output';
+                node.color = 'orange';
+                node.inputs = [{ name: 'Value', color: COLORS.orange }];
                 break;
         }
-
-        graph.nodes.push(nodeData);
+        
+        graph.nodes.push(node);
+        
         if (type !== 'default') {
-            this._updateParentNodeInterface();
+            this.updateParentInterface();
         }
-
+        
         this.render();
     }
 
     deleteSelected() {
         if (this.state.selectedNodeIds.size === 0) return;
-        const graph = this.getCurrentGraph();
-        let ioNodeDeleted = false;
-
+        
+        const graph = this.currentGraph;
+        let ioDeleted = false;
+        
+        // Remove nodes
         graph.nodes = graph.nodes.filter(node => {
             if (this.state.selectedNodeIds.has(node.id)) {
-                if (node.type !== 'default') ioNodeDeleted = true;
+                if (node.type !== 'default') ioDeleted = true;
                 if (node.subgraphId) delete this.state.graphs[node.subgraphId];
                 return false;
             }
             return true;
         });
-
+        
+        // Remove connections
         graph.connections = graph.connections.filter(conn =>
             !this.state.selectedNodeIds.has(conn.start.nodeId) &&
             !this.state.selectedNodeIds.has(conn.end.nodeId)
         );
-
+        
         this.state.selectedNodeIds.clear();
+        
+        if (ioDeleted) this.updateParentInterface();
+        
+        this.render();
+    }
 
-        if (ioNodeDeleted) {
-            this._updateParentNodeInterface();
+    deleteConnection(connectionId) {
+        if (!connectionId) return;
+        
+        const graph = this.currentGraph;
+        graph.connections = graph.connections.filter(c => c.id !== connectionId);
+        this.state.selectedConnectionId = null;
+        this.render();
+    }
+
+    copySelected() {
+        if (this.state.selectedNodeIds.size === 0) return;
+        
+        this.state.copiedNodes = this.currentGraph.nodes
+            .filter(n => this.state.selectedNodeIds.has(n.id))
+            .map(n => JSON.parse(JSON.stringify(n)));
+        
+        this.renderToolbar();
+    }
+
+    pasteNodes() {
+        if (this.state.copiedNodes.length === 0) return;
+        
+        const graph = this.currentGraph;
+        this.clearSelection();
+        
+        this.state.copiedNodes.forEach(nodeData => {
+            const node = JSON.parse(JSON.stringify(nodeData));
+            node.id = `node_${this.state.nodeCounter++}`;
+            node.x += CONFIG.GRID_SIZE;
+            node.y += CONFIG.GRID_SIZE;
+            
+            // Copy subgraph if exists
+            if (node.subgraphId) {
+                const oldSubgraph = this.state.graphs[node.subgraphId];
+                if (oldSubgraph) {
+                    const newSubgraphId = `graph_${node.id}`;
+                    this.state.graphs[newSubgraphId] = JSON.parse(JSON.stringify(oldSubgraph));
+                    this.state.graphs[newSubgraphId].id = newSubgraphId;
+                    this.state.graphs[newSubgraphId].name = node.title;
+                    node.subgraphId = newSubgraphId;
+                }
+            }
+            
+            graph.nodes.push(node);
+            this.state.selectedNodeIds.add(node.id);
+        });
+        
+        this.render();
+    }
+
+    selectNode(nodeId, multi = false) {
+        if (!multi && !this.state.selectedNodeIds.has(nodeId)) {
+            this.state.selectedNodeIds.clear();
         }
-
+        
+        if (this.state.selectedNodeIds.has(nodeId) && multi) {
+            this.state.selectedNodeIds.delete(nodeId);
+        } else {
+            this.state.selectedNodeIds.add(nodeId);
+        }
+        
         this.render();
     }
 
@@ -552,96 +710,70 @@ class NodeEditor {
         }
     }
 
-    selectNodesInBox(box) {
-        const graph = this.getCurrentGraph();
-        graph.nodes.forEach(node => {
-            const nodeRect = {
-                left: node.x,
-                top: node.y,
-                right: node.x + node.width,
-                bottom: node.y + node.height,
-            };
-            if (box.right > nodeRect.left && box.left < nodeRect.right && box.bottom > nodeRect.top && box.top < nodeRect.bottom) {
-                this.state.selectedNodeIds.add(node.id);
-            }
-        });
-        this.render();
-    }
-
-    updateNodeProperty(nodeId, property, value, sourceElement = null) {
-        const node = this.findNodeById(nodeId);
+    updateNodeProp(nodeId, prop, value, source = null) {
+        const node = this.findNode(nodeId);
         if (!node) return;
-
-        node[property] = value;
-
-        if (property === 'title') {
-            const nodeHeader = this.canvasContent.querySelector(`[data-node-id="${nodeId}"] .node-header`);
-            if (nodeHeader && nodeHeader !== sourceElement) {
-                nodeHeader.textContent = value;
-            }
-
-            const propTitleInput = document.getElementById('propNodeTitle');
-            if (propTitleInput && propTitleInput !== sourceElement) {
-                propTitleInput.value = value;
-            }
-
-            let needsToolbarRender = false;
+        
+        node[prop] = value;
+        
+        // Update UI elements
+        if (prop === 'title') {
+            const header = this.dom.canvasContent.querySelector(`[data-node-id="${nodeId}"] .node-header`);
+            if (header && header !== source) header.textContent = value;
+            
+            const titleInput = document.getElementById('propNodeTitle');
+            if (titleInput && titleInput !== source) titleInput.value = value;
+            
+            // Update subgraph name
             if (node.subgraphId) {
-                const subgraph = this.findGraphById(node.subgraphId);
+                const subgraph = this.state.graphs[node.subgraphId];
                 if (subgraph) {
                     subgraph.name = value;
                     if (this.state.navigationStack.includes(node.subgraphId)) {
-                        needsToolbarRender = true;
+                        this.renderToolbar();
                     }
                 }
             }
-
-            if (node.type === 'graph-input' || node.type === 'graph-output') {
-                this._updateParentNodeInterface();
-                if (needsToolbarRender) {
-                    this._renderToolbar();
-                }
-            } else if (needsToolbarRender) {
-                this._renderToolbar();
+            
+            // Update parent if I/O node
+            if (node.type !== 'default') {
+                this.updateParentInterface();
             }
-
-        } else if (property === 'text') {
-            const nodeTextarea = this.canvasContent.querySelector(`[data-node-id="${nodeId}"] .node-text`);
-            if (nodeTextarea && nodeTextarea !== sourceElement) {
-                nodeTextarea.value = value;
-            }
-
-            const propContentTextarea = document.getElementById('propNodeContent');
-            if (propContentTextarea && propContentTextarea !== sourceElement) {
-                propContentTextarea.value = value;
-            }
+        } else if (prop === 'text') {
+            const textarea = this.dom.canvasContent.querySelector(`[data-node-id="${nodeId}"] .node-text`);
+            if (textarea && textarea !== source) textarea.value = value;
+            
+            const contentInput = document.getElementById('propNodeContent');
+            if (contentInput && contentInput !== source) contentInput.value = value;
         }
     }
 
-    setNodeColor(nodeId, colorName) {
-        const node = this.findNodeById(nodeId);
+    setNodeColor(nodeId, color) {
+        const node = this.findNode(nodeId);
         if (!node) return;
-
-        node.color = colorName;
-        const newPinColor = COLORS[colorName] || COLORS.default;
-
-        if (node.type === 'graph-input') {
-            node.outputs[0].color = newPinColor;
-        } else if (node.type === 'graph-output') {
-            node.inputs[0].color = newPinColor;
+        
+        node.color = color;
+        const pinColor = COLORS[color] || COLORS.default;
+        
+        // Update pin colors for I/O nodes
+        if (node.type === 'graph-input' && node.outputs[0]) {
+            node.outputs[0].color = pinColor;
+        } else if (node.type === 'graph-output' && node.inputs[0]) {
+            node.inputs[0].color = pinColor;
         }
-
+        
         if (node.type !== 'default') {
-            this._updateParentNodeInterface();
+            this.updateParentInterface();
         }
-
+        
         this.render();
-        this.updateAllConnectionPaths();
     }
 
+    // ===== Navigation =====
+    
     enterNode(nodeId) {
-        const node = this.findNodeById(nodeId);
-        if (node && node.subgraphId) {
+        const node = this.findNode(nodeId);
+        if (node?.subgraphId) {
             this.state.navigationStack.push(node.subgraphId);
             this.clearSelection();
             this.render();
@@ -655,929 +787,686 @@ class NodeEditor {
         this.render();
     }
 
-    // ----- SAVE & LOAD -----
+    updateParentInterface() {
+        if (this.state.navigationStack.length <= 1) return;
+        
+        const currentId = this.state.navigationStack.at(-1);
+        const parentId = this.state.navigationStack.at(-2);
+        const parentGraph = this.state.graphs[parentId];
+        
+        const parentNode = parentGraph.nodes.find(n => n.subgraphId === currentId);
+        if (!parentNode) return;
+        
+        const currentGraph = this.state.graphs[currentId];
+        const inputs = currentGraph.nodes.filter(n => n.type === 'graph-input');
+        const outputs = currentGraph.nodes.filter(n => n.type === 'graph-output');
+        
+        parentNode.inputs = inputs.map(n => ({
+            name: n.title,
+            color: COLORS[n.color] || COLORS.default
+        }));
+        
+        parentNode.outputs = outputs.map(n => ({
+            name: n.title,
+            color: COLORS[n.color] || COLORS.default
+        }));
+    }
 
-    /**
-     * Saves the full graph data to the original, detailed JSON format, preserving positions.
-     */
-    saveGraph() {
-        const rootGraph = this.findGraphById('root');
-        if (!rootGraph) return;
+    showConnectionMenu(connectionId, e) {
+        this.state.selectedConnectionId = connectionId;
+        const menu = this.dom.connectionContextMenu;
+        menu.style.left = `${e.clientX}px`;
+        menu.style.top = `${e.clientY}px`;
+        menu.style.display = 'block';
+    }
 
-        if (rootGraph.name === 'Root' || rootGraph.name.trim() === '') {
-            const newName = prompt("Please enter a project name before saving:", "My Project");
-            if (newName && newName.trim() !== '') {
-                rootGraph.name = newName.trim();
-                this._renderToolbar();
+    // ===== Rendering =====
+    
+    render() {
+        this.renderCanvas();
+        this.renderToolbar();
+        this.renderProperties();
+    }
+
+    renderCanvas() {
+        const graph = this.currentGraph;
+        const content = this.dom.canvasContent;
+        
+        // Save textarea scroll positions
+        const scrolls = {};
+        content.querySelectorAll('.node-text').forEach(ta => {
+            const nodeId = ta.closest('.node').dataset.nodeId;
+            scrolls[nodeId] = { top: ta.scrollTop, left: ta.scrollLeft };
+        });
+        
+        // Clear and recreate
+        content.innerHTML = '<div class="selection-box" id="selectionBox"></div>';
+        this.dom.selectionBox = document.getElementById('selectionBox');
+        
+        // Apply transform
+        const transform = `translate(${graph.pan.x}px, ${graph.pan.y}px) scale(${graph.zoom})`;
+        content.style.transform = transform;
+        
+        // Update grid
+        const gridSize = CONFIG.GRID_SIZE * graph.zoom;
+        this.dom.canvas.style.backgroundSize = `${gridSize}px ${gridSize}px`;
+        this.dom.canvas.style.backgroundPosition = `${graph.pan.x % gridSize}px ${graph.pan.y % gridSize}px`;
+        
+        // Render nodes and connections
+        graph.nodes.forEach(node => this.renderNode(node));
+        graph.connections.forEach(conn => this.renderConnection(conn));
+        
+        // Restore scroll positions
+        Object.entries(scrolls).forEach(([nodeId, scroll]) => {
+            const ta = content.querySelector(`[data-node-id="${nodeId}"] .node-text`);
+            if (ta) {
+                ta.scrollTop = scroll.top;
+                ta.scrollLeft = scroll.left;
+            }
+        });
+    }
+
+    renderNode(node) {
+        const el = document.createElement('div');
+        const isSelected = this.state.selectedNodeIds.has(node.id);
+        const hasSubgraph = node.subgraphId && this.state.graphs[node.subgraphId]?.nodes.length > 0;
+        
+        el.className = `node color-${node.color} ${isSelected ? 'selected' : ''} ${hasSubgraph ? 'has-subgraph' : ''}`;
+        el.dataset.nodeId = node.id;
+        el.style.cssText = `left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px`;
+        
+        const textContent = node.type === 'default' 
+            ? `<textarea class="node-text" placeholder="Enter text...">${node.text}</textarea>`
+            : '';
+        
+        el.innerHTML = `
+            <div class="node-header">${node.title}</div>
+            <div class="node-content">${textContent}</div>
+            ${node.type === 'default' ? `<div class="resize-handle" data-node-id="${node.id}"></div>` : ''}
+        `;
+        
+        this.dom.canvasContent.appendChild(el);
+        this.renderConnectionPoints(el, node);
+    }
+
+    renderConnectionPoints(nodeEl, node) {
+        const createPoint = (data, type, index) => {
+            const y = CONFIG.CONNECTION_OFFSET + (index * CONFIG.CONNECTION_SPACING);
+            
+            const point = document.createElement('div');
+            point.className = `connection-point ${type}`;
+            point.dataset.nodeId = node.id;
+            point.dataset.type = type;
+            point.dataset.index = index;
+            point.style.top = `${y}px`;
+            point.style.backgroundColor = data.color;
+            
+            const label = document.createElement('div');
+            label.className = 'connection-point-label';
+            label.textContent = data.name;
+            label.style.top = `${y}px`;
+            
+            nodeEl.appendChild(point);
+            nodeEl.appendChild(label);
+        };
+        
+        node.inputs.forEach((input, i) => createPoint(input, 'input', i));
+        node.outputs.forEach((output, i) => createPoint(output, 'output', i));
+        
+        // Set minimum content height
+        const maxPoints = Math.max(node.inputs.length, node.outputs.length);
+        const minHeight = maxPoints > 0 ? (maxPoints * CONFIG.CONNECTION_SPACING + 16) : 0;
+        nodeEl.querySelector('.node-content').style.minHeight = `${minHeight}px`;
+    }
+
+    renderConnection(conn) {
+        const startNode = this.findNode(conn.start.nodeId);
+        const endNode = this.findNode(conn.end.nodeId);
+        if (!startNode || !endNode) return;
+        
+        const line = document.createElement('div');
+        line.className = 'connection-line';
+        line.dataset.connectionId = conn.id;
+        
+        const svgNS = "http://www.w3.org/2000/svg";
+        const svg = document.createElementNS(svgNS, 'svg');
+        const defs = document.createElementNS(svgNS, 'defs');
+        const gradient = document.createElementNS(svgNS, 'linearGradient');
+        const path = document.createElementNS(svgNS, 'path');
+        
+        const gradId = `grad_${conn.id}`;
+        gradient.setAttribute('id', gradId);
+        gradient.setAttribute('gradientUnits', 'userSpaceOnUse');
+        
+        const startColor = startNode.outputs[conn.start.index]?.color || COLORS.default;
+        const endColor = endNode.inputs[conn.end.index]?.color || COLORS.default;
+        
+        gradient.innerHTML = `
+            <stop offset="0%" style="stop-color:${startColor}" />
+            <stop offset="100%" style="stop-color:${endColor}" />
+        `;
+        
+        path.setAttribute('stroke', `url(#${gradId})`);
+        path.dataset.connectionId = conn.id;
+        
+        defs.appendChild(gradient);
+        svg.appendChild(defs);
+        svg.appendChild(path);
+        line.appendChild(svg);
+        this.dom.canvasContent.appendChild(line);
+        
+        this.updateConnectionPath(conn.id);
+    }
+
+    updateConnectionPath(connectionId) {
+        const conn = this.currentGraph.connections.find(c => c.id === connectionId);
+        if (!conn) return;
+        
+        const line = this.dom.canvasContent.querySelector(`.connection-line[data-connection-id="${connectionId}"]`);
+        if (!line) return;
+        
+        const startNode = this.findNode(conn.start.nodeId);
+        const endNode = this.findNode(conn.end.nodeId);
+        if (!startNode || !endNode) {
+            line.remove();
+            return;
+        }
+        
+        const startEl = this.dom.canvasContent.querySelector(`[data-node-id="${conn.start.nodeId}"]`);
+        if (!startEl) return;
+        
+        const x1 = startNode.x + startEl.offsetWidth;
+        const y1 = startNode.y + CONFIG.CONNECTION_OFFSET + (conn.start.index * CONFIG.CONNECTION_SPACING) + 8;
+        const x2 = endNode.x;
+        const y2 = endNode.y + CONFIG.CONNECTION_OFFSET + (conn.end.index * CONFIG.CONNECTION_SPACING) + 8;
+        
+        const path = line.querySelector('path');
+        const ctrl = Math.abs(x2 - x1) * 0.5;
+        path.setAttribute('d', `M ${x1} ${y1} C ${x1 + ctrl} ${y1} ${x2 - ctrl} ${y2} ${x2} ${y2}`);
+        
+        const gradient = line.querySelector('linearGradient');
+        if (gradient) {
+            gradient.setAttribute('x1', x1);
+            gradient.setAttribute('y1', y1);
+            gradient.setAttribute('x2', x2);
+            gradient.setAttribute('y2', y2);
+        }
+    }
+
+    updateConnectionPaths() {
+        this.currentGraph.connections.forEach(conn => this.updateConnectionPath(conn.id));
+    }
+
+    renderToolbar() {
+        // Update buttons
+        this.dom.copyBtn.disabled = this.state.selectedNodeIds.size === 0;
+        this.dom.pasteBtn.disabled = this.state.copiedNodes.length === 0;
+        this.dom.deleteBtn.disabled = this.state.selectedNodeIds.size === 0;
+        
+        // Update selection count
+        const count = this.state.selectedNodeIds.size;
+        this.dom.selectedCount.textContent = count > 0 ? `${count} node${count > 1 ? 's' : ''} selected` : '';
+        
+        // Update breadcrumbs
+        this.dom.breadcrumbs.innerHTML = '';
+        
+        this.state.navigationStack.forEach((graphId, index) => {
+            const graph = this.state.graphs[graphId];
+            if (!graph) return;
+            
+            const isLast = index === this.state.navigationStack.length - 1;
+            
+            if (graphId === 'root' && isLast) {
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'breadcrumb-input';
+                input.value = graph.name;
+                input.oninput = e => {
+                    this.state.graphs.root.name = e.target.value;
+                };
+                input.onchange = e => {
+                    if (this.state.graphs.root.name.trim() === '') {
+                        this.state.graphs.root.name = 'Root';
+                        e.target.value = 'Root';
+                    }
+                };
+                this.dom.breadcrumbs.appendChild(input);
             } else {
+                const item = document.createElement('span');
+                item.textContent = graph.name;
+                item.className = `breadcrumb-item ${isLast ? 'active' : ''}`;
+                if (!isLast) item.onclick = () => this.navigateToLevel(index);
+                this.dom.breadcrumbs.appendChild(item);
+            }
+            
+            if (!isLast) {
+                const sep = document.createElement('span');
+                sep.className = 'breadcrumb-separator';
+                sep.textContent = '>';
+                this.dom.breadcrumbs.appendChild(sep);
+            }
+        });
+    }
+
+    renderProperties() {
+        const panel = this.dom.propertiesPanel;
+        const content = this.dom.propertiesContent;
+        const selected = this.state.selectedNodeIds;
+        
+        if (selected.size === 0) {
+            panel.classList.remove('show');
+            return;
+        }
+        
+        panel.classList.add('show');
+        
+        if (selected.size > 1) {
+            content.innerHTML = `<p>${selected.size} nodes selected</p>`;
+            return;
+        }
+        
+        const nodeId = selected.values().next().value;
+        const node = this.findNode(nodeId);
+        if (!node) return;
+        
+        const isIO = node.type === 'graph-input' || node.type === 'graph-output';
+        
+        content.innerHTML = `
+            <div class="property-group">
+                <label>Node Title:</label>
+                <input type="text" id="propNodeTitle" value="${node.title}" data-node-id="${nodeId}">
+            </div>
+            ${!isIO ? `
+                <div class="property-group">
+                    <label>Text Content:</label>
+                    <textarea id="propNodeContent" rows="4" data-node-id="${nodeId}">${node.text}</textarea>
+                </div>
+            ` : ''}
+            <div class="property-group">
+                <label>Node Color:</label>
+                <div class="color-options">
+                    ${Object.keys(COLORS).map(color => `
+                        <div class="color-option ${color} ${node.color === color ? 'selected' : ''}" 
+                             onclick="window.nodeEditor.setNodeColor('${nodeId}', '${color}')"></div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+        
+        // Bind property events
+        const titleInput = document.getElementById('propNodeTitle');
+        const contentInput = document.getElementById('propNodeContent');
+        
+        if (titleInput) {
+            titleInput.oninput = e => this.updateNodeProp(e.target.dataset.nodeId, 'title', e.target.value, e.target);
+        }
+        if (contentInput) {
+            contentInput.oninput = e => this.updateNodeProp(e.target.dataset.nodeId, 'text', e.target.value, e.target);
+        }
+    }
+
+    // ===== Save/Load =====
+    
+    saveGraph() {
+        const rootGraph = this.state.graphs.root;
+        
+        // Validate name
+        if (!rootGraph.name || rootGraph.name === 'Root' || rootGraph.name.trim() === '') {
+            const name = prompt("Please enter a project name before saving:", "My Project");
+            if (!name || name.trim() === '') {
                 alert("Save cancelled. A valid project name is required.");
                 return;
             }
+            rootGraph.name = name.trim();
+            this.renderToolbar();
         }
-
+        
         const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}.json`;
-
-        const saveData = {
+        const data = {
             version: "1.0.0",
             graphs: this.state.graphs
         };
-
-        const dataStr = JSON.stringify(saveData, null, 2);
-
-        const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
-        const linkElement = document.createElement('a');
-        linkElement.setAttribute('href', dataUri);
-        linkElement.setAttribute('download', fileName);
-        linkElement.click();
+        
+        this.downloadJSON(data, fileName);
     }
 
-    /**
-     * Smart loader that detects file format and loads accordingly.
-     */
+    saveSimpleGraph() {
+        const rootGraph = this.state.graphs.root;
+        
+        // Validate name
+        if (!rootGraph.name || rootGraph.name === 'Root' || rootGraph.name.trim() === '') {
+            const name = prompt("Please enter a project name before saving:", "My Project");
+            if (!name || name.trim() === '') {
+                alert("Save cancelled. A valid project name is required.");
+                return;
+            }
+            rootGraph.name = name.trim();
+            this.renderToolbar();
+        }
+        
+        const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}_readable.json`;
+        
+        // Generate unique handles for all nodes
+        const nodeToHandle = new Map();
+        const usedHandles = new Set();
+        
+        Object.values(this.state.graphs).forEach(graph => {
+            graph.nodes.forEach(node => {
+                const handle = this.generateHandle(node.title || node.type, usedHandles);
+                usedHandles.add(handle);
+                nodeToHandle.set(node.id, handle);
+            });
+        });
+        
+        const data = {
+            format: "node-graph-v4-logic-only",
+            title: rootGraph.name,
+            graph: this.convertToReadable(rootGraph.id, nodeToHandle)
+        };
+        
+        this.downloadJSON(data, fileName);
+    }
+
+    convertToReadable(graphId, nodeToHandle) {
+        const graph = this.state.graphs[graphId];
+        if (!graph) return null;
+        
+        const readable = {
+            nodes: [],
+            connections: []
+        };
+        
+        // Convert nodes
+        readable.nodes = graph.nodes.map(node => {
+            const readableNode = {
+                id: nodeToHandle.get(node.id),
+                title: node.title,
+                text: node.text,
+                color: node.color,
+                type: node.type,
+                inputs: node.inputs,
+                outputs: node.outputs
+            };
+            
+            if (node.subgraphId) {
+                readableNode.subgraph = this.convertToReadable(node.subgraphId, nodeToHandle);
+            }
+            
+            return readableNode;
+        });
+        
+        // Convert connections with pin disambiguation
+        readable.connections = graph.connections.map(conn => {
+            const startNode = this.findNode(conn.start.nodeId, graphId);
+            const endNode = this.findNode(conn.end.nodeId, graphId);
+            if (!startNode || !endNode) return null;
+            
+            const startPin = startNode.outputs[conn.start.index]?.name || `output_${conn.start.index}`;
+            const isStartAmbiguous = startNode.outputs.filter(p => p.name === startPin).length > 1;
+            const startRef = isStartAmbiguous ? `${startPin}:${conn.start.index}` : startPin;
+            
+            const endPin = endNode.inputs[conn.end.index]?.name || `input_${conn.end.index}`;
+            const isEndAmbiguous = endNode.inputs.filter(p => p.name === endPin).length > 1;
+            const endRef = isEndAmbiguous ? `${endPin}:${conn.end.index}` : endPin;
+            
+            return {
+                from: `${nodeToHandle.get(conn.start.nodeId)}.outputs.${startRef}`,
+                to: `${nodeToHandle.get(conn.end.nodeId)}.inputs.${endRef}`
+            };
+        }).filter(Boolean);
+        
+        return readable;
+    }
+
     loadGraph(event) {
         const file = event.target.files[0];
         if (!file) return;
-
+        
         const reader = new FileReader();
-        reader.onload = (e) => {
+        reader.onload = e => {
             try {
-                const loadedData = JSON.parse(e.target.result);
-
-                if (!loadedData) {
-                    throw new Error("File is empty or invalid.");
-                }
+                const data = JSON.parse(e.target.result);
                 
-                // Check for the new readable format (v2 or higher)
-                if (loadedData.format && loadedData.format.startsWith("node-graph-v") && loadedData.graph) {
-                    this._loadReadableGraph(loadedData);
+                if (!data) throw new Error("File is empty or invalid.");
                 
-                // Check for the original, detailed format
-                } else if (loadedData.graphs && loadedData.version) {
-                    this._loadFullGraph(loadedData);
-                
-                // Check for the legacy, simplified format for backward compatibility
-                } else if (loadedData.story && loadedData.title) {
-                    this._loadLegacySimpleGraph(loadedData);
-                
+                // Detect format and load accordingly
+                if (data.format?.startsWith("node-graph-v") && data.graph) {
+                    this.loadReadableGraph(data);
+                } else if (data.graphs && data.version) {
+                    this.loadFullGraph(data);
                 } else {
                     throw new Error("Invalid or unsupported file format.");
                 }
-
             } catch (error) {
                 alert('Error loading graph: ' + error.message);
                 console.error(error);
             }
         };
-
+        
         reader.readAsText(file);
-        event.target.value = ''; // Reset file input
+        event.target.value = '';
     }
-    
-    /**
-     * Loads the full graph, preserving exact node positions and sizes.
-     */
-    _loadFullGraph(loadedData) {
-        this.resetState();
-        // Directly use the loaded graph data, which includes positions.
-        this.state.graphs = loadedData.graphs;
 
+    loadFullGraph(data) {
+        this.resetState();
+        this.state.graphs = data.graphs;
+        
+        // Update node counter
         let maxId = 0;
         Object.values(this.state.graphs).forEach(graph => {
             graph.nodes.forEach(node => {
-                const idNum = parseInt(node.id.split('_')[1], 10);
-                if (!isNaN(idNum) && idNum > maxId) {
-                    maxId = idNum;
-                }
+                const id = parseInt(node.id.split('_')[1], 10);
+                if (!isNaN(id) && id > maxId) maxId = id;
             });
         });
         this.state.nodeCounter = maxId + 1;
-        // No procedural layout is called. We just render the saved state.
-        this.render();
-    }
-
-    copySelectedNodes() {
-        if (this.state.selectedNodeIds.size === 0) return;
-        const graph = this.getCurrentGraph();
-
-        this.state.copiedNodes = graph.nodes
-            .filter(node => this.state.selectedNodeIds.has(node.id))
-            .map(node => JSON.parse(JSON.stringify(node)));
-
-        this._renderToolbar();
-    }
-
-    pasteNodes() {
-        if (this.state.copiedNodes.length === 0) return;
-        const graph = this.getCurrentGraph();
-        this.clearSelection();
-
-        this.state.copiedNodes.forEach(nodeData => {
-            const newNode = JSON.parse(JSON.stringify(nodeData));
-            newNode.id = `node_${this.state.nodeCounter++}`;
-            newNode.x += GRID_SIZE;
-            newNode.y += GRID_SIZE;
-
-            if (newNode.subgraphId) {
-                const originalSubgraph = this.findGraphById(newNode.subgraphId);
-                if (originalSubgraph) {
-                    const newSubgraph = JSON.parse(JSON.stringify(originalSubgraph));
-                    newSubgraph.id = `graph_${newNode.id}`;
-                    newSubgraph.name = newNode.title;
-                    this.state.graphs[newSubgraph.id] = newSubgraph;
-                    newNode.subgraphId = newSubgraph.id;
-                }
-            }
-
-            graph.nodes.push(newNode);
-            this.state.selectedNodeIds.add(newNode.id);
-        });
-
-        this.render();
-    }
-    
-    // ----- NEW READABLE & LOGIC-ONLY SAVE/LOAD -----
-
-    /**
-     * Saves the graph to a human-readable, logic-only JSON file without positional data.
-     */
-    saveSimpleGraph() {
-        const rootGraph = this.findGraphById('root');
-        if (!rootGraph) return;
-
-        if (rootGraph.name === 'Root' || rootGraph.name.trim() === '') {
-            const newName = prompt("Please enter a project name before saving:", "My Project");
-            if (newName && newName.trim() !== '') {
-                rootGraph.name = newName.trim();
-                this._renderToolbar();
-            } else {
-                alert("Save cancelled. A valid project name is required.");
-                return;
-            }
-        }
-
-        const fileName = `${rootGraph.name.replace(/[^a-z0-9_ -]/gi, '_').trim()}_readable.json`;
-
-        const nodeIdToHandleMap = new Map();
-        const usedHandles = new Set();
-        Object.values(this.state.graphs).forEach(graph => {
-            graph.nodes.forEach(node => {
-                const baseName = node.title || node.type;
-                const handle = this._generateUniqueHandle(baseName, usedHandles);
-                usedHandles.add(handle);
-                nodeIdToHandleMap.set(node.id, handle);
-            });
-        });
-
-        const readableGraph = this._convertGraphToReadable(rootGraph.id, nodeIdToHandleMap);
-
-        const saveData = {
-            format: "node-graph-v4-logic-only",
-            title: rootGraph.name,
-            graph: readableGraph
-        };
-
-        const dataStr = JSON.stringify(saveData, null, 2);
-        const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
         
-        const linkElement = document.createElement('a');
-        linkElement.setAttribute('href', dataUri);
-        linkElement.setAttribute('download', fileName);
-        linkElement.click();
+        this.render();
     }
 
-    /**
-     * HELPER: Recursively converts a graph to a nested, readable format, omitting positional data
-     * and handling ambiguous pin names.
-     */
-    _convertGraphToReadable(graphId, nodeIdToHandleMap) {
-        const graph = this.findGraphById(graphId);
-        if (!graph) return null;
-
-        const readableGraph = {
-            nodes: [],
-            connections: []
-        };
-
-        readableGraph.nodes = graph.nodes.map(node => {
-            const nodeCopy = JSON.parse(JSON.stringify(node));
-            const readableNode = {
-                id: nodeIdToHandleMap.get(nodeCopy.id),
-                title: nodeCopy.title,
-                text: nodeCopy.text,
-                color: nodeCopy.color,
-                type: nodeCopy.type,
-                inputs: nodeCopy.inputs,
-                outputs: nodeCopy.outputs
-            };
-
-            if (nodeCopy.subgraphId) {
-                readableNode.subgraph = this._convertGraphToReadable(nodeCopy.subgraphId, nodeIdToHandleMap);
-            }
-            return readableNode;
-        });
-
-        readableGraph.connections = graph.connections.map(conn => {
-            const startNode = this.findNodeById(conn.start.nodeId, graph.id);
-            const endNode = this.findNodeById(conn.end.nodeId, graph.id);
-            if (!startNode || !endNode) return null;
-            
-            // --- AMBIGUITY FIX START ---
-            const startPinName = startNode.outputs[conn.start.index]?.name || `output_${conn.start.index}`;
-            const isStartPinAmbiguous = startNode.outputs.filter(p => p.name === startPinName).length > 1;
-            const finalStartPin = isStartPinAmbiguous ? `${startPinName}:${conn.start.index}` : startPinName;
-            
-            const endPinName = endNode.inputs[conn.end.index]?.name || `input_${conn.end.index}`;
-            const isEndPinAmbiguous = endNode.inputs.filter(p => p.name === endPinName).length > 1;
-            const finalEndPin = isEndPinAmbiguous ? `${endPinName}:${conn.end.index}` : endPinName;
-            // --- AMBIGUITY FIX END ---
-
-            return {
-                from: `${nodeIdToHandleMap.get(conn.start.nodeId)}.outputs.${finalStartPin}`,
-                to: `${nodeIdToHandleMap.get(conn.end.nodeId)}.inputs.${finalEndPin}`,
-            };
-        }).filter(Boolean);
-
-        return readableGraph;
-    }
-    
-    /**
-     * Loads a graph from the readable format and applies a procedural layout.
-     */
-    _loadReadableGraph(readableData) {
+    loadReadableGraph(data) {
         this.resetState();
-        const flatGraphs = {};
-        const handleToNodeIdMap = new Map();
-
-        const rootReadableGraph = readableData.graph;
-        rootReadableGraph.id = 'root';
-        rootReadableGraph.name = readableData.title || 'Loaded Graph';
-
-        this._convertReadableToState(rootReadableGraph, flatGraphs, handleToNodeIdMap);
+        const handleToId = new Map();
         
-        this.state.graphs = flatGraphs;
-
+        // Convert readable format back to internal format
+        const rootReadable = data.graph;
+        rootReadable.id = 'root';
+        rootReadable.name = data.title || 'Loaded Graph';
+        
+        this.convertFromReadable(rootReadable, handleToId);
+        
+        // Apply procedural layout to all graphs
         Object.values(this.state.graphs).forEach(graph => {
-            this._procedurallyLayoutGraph(graph);
+            this.layoutGraph(graph);
         });
-
-        const rootGraph = this.findGraphById('root');
-        if (rootGraph) {
-            rootGraph.name = readableData.title || 'Loaded Graph';
-        }
         
+        this.state.graphs.root.name = data.title || 'Loaded Graph';
         this.render();
     }
 
-    /**
-     * HELPER: Recursively flattens the readable graph format into the editor's state,
-     * correctly parsing potentially ambiguous pin names.
-     */
-    _convertReadableToState(readableGraph, flatGraphs, handleToNodeIdMap) {
-        const newGraph = {
-            id: readableGraph.id,
-            name: readableGraph.name,
+    convertFromReadable(readable, handleToId) {
+        const graph = {
+            id: readable.id,
+            name: readable.name,
             pan: { x: 50, y: 50 },
             zoom: 1,
             nodes: [],
             connections: []
         };
-
-        readableGraph.nodes.forEach(readableNode => {
-            const internalNodeId = `node_${this.state.nodeCounter++}`;
-            handleToNodeIdMap.set(readableNode.id, internalNodeId);
+        
+        // Convert nodes
+        readable.nodes.forEach(readableNode => {
+            const nodeId = `node_${this.state.nodeCounter++}`;
+            handleToId.set(readableNode.id, nodeId);
             
-            const newNode = {
+            const node = {
                 ...readableNode,
-                id: internalNodeId,
-                x: 0, 
+                id: nodeId,
+                x: 0,
                 y: 0,
-                width: NODE_MIN_WIDTH,
-                height: NODE_MIN_HEIGHT,
+                width: CONFIG.NODE_MIN_WIDTH,
+                height: CONFIG.NODE_MIN_HEIGHT
             };
-
-            // Handle existing subgraph from JSON
+            
+            // Handle subgraph
             if (readableNode.subgraph) {
                 const subgraph = readableNode.subgraph;
-                subgraph.id = `graph_${internalNodeId}`;
+                subgraph.id = `graph_${nodeId}`;
                 subgraph.name = readableNode.title;
-                newNode.subgraphId = subgraph.id;
-                this._convertReadableToState(subgraph, flatGraphs, handleToNodeIdMap);
-                delete newNode.subgraph;
-            }
-            // CREATE EMPTY SUBGRAPH FOR DEFAULT NODES WITHOUT EXISTING SUBGRAPHS
-            else if (newNode.type === 'default') {
-                // Create empty subgraph for consistency with addNode behavior
-                const subgraphId = `graph_${internalNodeId}`;
-                const emptySubgraph = {
+                node.subgraphId = subgraph.id;
+                this.convertFromReadable(subgraph, handleToId);
+                delete node.subgraph;
+            } else if (node.type === 'default') {
+                // Create empty subgraph for default nodes
+                const subgraphId = `graph_${nodeId}`;
+                this.state.graphs[subgraphId] = {
                     id: subgraphId,
-                    name: newNode.title,
+                    name: node.title,
                     nodes: [],
                     connections: [],
                     pan: { x: 0, y: 0 },
-                    zoom: 1,
+                    zoom: 1
                 };
-                flatGraphs[subgraphId] = emptySubgraph;
-                newNode.subgraphId = subgraphId;
+                node.subgraphId = subgraphId;
             }
             
-            newGraph.nodes.push(newNode);
+            graph.nodes.push(node);
         });
-
-        if (readableGraph.connections) {
-            readableGraph.connections.forEach(readableConn => {
-                const fromParts = readableConn.from.split('.');
-                const toParts = readableConn.to.split('.');
-
-                const startNodeHandle = fromParts[0];
-                const endNodeHandle = toParts[0];
-
-                // --- AMBIGUITY FIX START ---
-                let startPinRef = fromParts.slice(2).join('.');
-                let startPinName = startPinRef;
+        
+        // Convert connections with pin disambiguation
+        if (readable.connections) {
+            readable.connections.forEach(conn => {
+                const fromParts = conn.from.split('.');
+                const toParts = conn.to.split('.');
+                
+                const startHandle = fromParts[0];
+                const endHandle = toParts[0];
+                
+                // Parse pin references with disambiguation
+                let startPin = fromParts.slice(2).join('.');
                 let startIndex = -1;
-                if (startPinRef.includes(':')) {
-                    const parts = startPinRef.split(':');
-                    startPinName = parts[0];
-                    startIndex = parseInt(parts[1], 10);
+                if (startPin.includes(':')) {
+                    const [name, idx] = startPin.split(':');
+                    startPin = name;
+                    startIndex = parseInt(idx, 10);
                 }
-
-                let endPinRef = toParts.slice(2).join('.');
-                let endPinName = endPinRef;
+                
+                let endPin = toParts.slice(2).join('.');
                 let endIndex = -1;
-                if (endPinRef.includes(':')) {
-                    const parts = endPinRef.split(':');
-                    endPinName = parts[0];
-                    endIndex = parseInt(parts[1], 10);
+                if (endPin.includes(':')) {
+                    const [name, idx] = endPin.split(':');
+                    endPin = name;
+                    endIndex = parseInt(idx, 10);
                 }
-                // --- AMBIGUITY FIX END ---
-
-                const startNodeId = handleToNodeIdMap.get(startNodeHandle);
-                const endNodeId = handleToNodeIdMap.get(endNodeHandle);
-                const startNode = newGraph.nodes.find(n => n.id === startNodeId);
-                const endNode = newGraph.nodes.find(n => n.id === endNodeId);
-
+                
+                const startId = handleToId.get(startHandle);
+                const endId = handleToId.get(endHandle);
+                const startNode = graph.nodes.find(n => n.id === startId);
+                const endNode = graph.nodes.find(n => n.id === endId);
+                
                 if (startNode && endNode) {
                     if (startIndex === -1) {
-                        startIndex = startNode.outputs.findIndex(o => o.name === startPinName);
+                        startIndex = startNode.outputs.findIndex(o => o.name === startPin);
                     }
                     if (endIndex === -1) {
-                        endIndex = endNode.inputs.findIndex(i => i.name === endPinName);
+                        endIndex = endNode.inputs.findIndex(i => i.name === endPin);
                     }
                     
                     if (startIndex !== -1 && endIndex !== -1) {
-                        newGraph.connections.push({
+                        graph.connections.push({
                             id: `conn_${Date.now()}_${Math.random()}`,
-                            start: { nodeId: startNodeId, index: startIndex },
-                            end: { nodeId: endNodeId, index: endIndex }
+                            start: { nodeId: startId, index: startIndex },
+                            end: { nodeId: endId, index: endIndex }
                         });
                     }
                 }
             });
         }
         
-        flatGraphs[newGraph.id] = newGraph;
+        this.state.graphs[graph.id] = graph;
     }
 
-    /**
-     * NEW: Arranges nodes in a graph procedurally using a layered layout.
-     */
-    _procedurallyLayoutGraph(graph) {
-        if (!graph || !graph.nodes || graph.nodes.length === 0) {
-            return;
-        }
-
-        const PADDING_X = 350;
-        const PADDING_Y = 200;
-
-        const nodeLayers = new Map();
-        const layerNodeIndexes = new Map(); 
-        const nodesToProcess = [];
-
+    layoutGraph(graph) {
+        if (!graph || graph.nodes.length === 0) return;
+        
+        // Create layers based on connectivity
+        const layers = new Map();
+        const layerCounts = new Map();
+        
+        // Find root nodes (no incoming connections)
+        const rootNodes = [];
         graph.nodes.forEach(node => {
-            const incoming = graph.connections.filter(c => c.end.nodeId === node.id);
-            if (incoming.length === 0) {
-                nodeLayers.set(node.id, 0);
-                nodesToProcess.push(node);
+            const hasIncoming = graph.connections.some(c => c.end.nodeId === node.id);
+            if (!hasIncoming) {
+                layers.set(node.id, 0);
+                rootNodes.push(node);
             }
         });
-
-        let head = 0;
-        while(head < nodesToProcess.length) {
-            const currentNode = nodesToProcess[head++];
-            const currentLayer = nodeLayers.get(currentNode.id);
-
-            const outgoingConns = graph.connections.filter(c => c.start.nodeId === currentNode.id);
-            outgoingConns.forEach(conn => {
-                const targetNodeId = conn.end.nodeId;
-                if (!nodeLayers.has(targetNodeId)) {
-                    nodeLayers.set(targetNodeId, currentLayer + 1);
-                    const targetNode = graph.nodes.find(n => n.id === targetNodeId);
-                    if (targetNode) {
-                        nodesToProcess.push(targetNode);
-                    }
-                }
-            });
-        }
-
-        graph.nodes.forEach(node => {
-            const layer = nodeLayers.get(node.id) || 0;
-            const indexInLayer = layerNodeIndexes.get(layer) || 0;
-
-            node.x = layer * PADDING_X;
-            node.y = indexInLayer * PADDING_Y;
+        
+        // BFS to assign layers
+        const queue = [...rootNodes];
+        while (queue.length > 0) {
+            const current = queue.shift();
+            const currentLayer = layers.get(current.id);
             
-            layerNodeIndexes.set(layer, indexInLayer + 1);
+            graph.connections
+                .filter(c => c.start.nodeId === current.id)
+                .forEach(conn => {
+                    const targetId = conn.end.nodeId;
+                    if (!layers.has(targetId)) {
+                        layers.set(targetId, currentLayer + 1);
+                        const target = graph.nodes.find(n => n.id === targetId);
+                        if (target) queue.push(target);
+                    }
+                });
+        }
+        
+        // Position nodes
+        graph.nodes.forEach(node => {
+            const layer = layers.get(node.id) || 0;
+            const index = layerCounts.get(layer) || 0;
+            
+            node.x = layer * CONFIG.LAYOUT_PADDING_X;
+            node.y = index * CONFIG.LAYOUT_PADDING_Y;
+            
+            layerCounts.set(layer, index + 1);
         });
         
         graph.pan = { x: 50, y: 50 };
         graph.zoom = 1;
     }
 
-    // ----- LEGACY & UTILITY METHODS -----
-    
-    _loadLegacySimpleGraph(simpleData) {
-        this.resetState();
-        const rootGraph = this.getCurrentGraph();
-        rootGraph.name = simpleData.title || 'Loaded Graph';
-        this._convertLegacySimpleToGraph(simpleData.story, rootGraph);
-        this._procedurallyLayoutGraph(rootGraph);
-        this.render();
-    }
-
-    _convertLegacySimpleToGraph(simpleNodesArray, targetGraph) {
-        const simpleIdToNodeIdMap = new Map();
-        const usedSimpleIds = new Set();
-
-        simpleNodesArray.forEach(simpleNode => {
-            let runtimeId = simpleNode.id;
-            if (!runtimeId || usedSimpleIds.has(runtimeId)) {
-                runtimeId = this._generateUniqueHandle(simpleNode.name, usedSimpleIds);
-            }
-            usedSimpleIds.add(runtimeId);
-            simpleNode._runtimeId = runtimeId;
-        });
-        
-        simpleNodesArray.forEach(simpleNode => {
-            const editorNodeId = `node_${this.state.nodeCounter++}`;
-            simpleIdToNodeIdMap.set(simpleNode._runtimeId, editorNodeId);
-
-            const nodeData = {
-                id: editorNodeId,
-                title: simpleNode.name,
-                text: simpleNode.text || '',
-                x: 0,
-                y: 0,
-                width: NODE_MIN_WIDTH,
-                height: NODE_MIN_HEIGHT,
-                color: 'default',
-                type: 'default',
-                inputs: [{ name: 'input', color: COLORS.default }],
-                outputs: [],
-                subgraphId: null,
-            };
-
-            if (simpleNode.branches) {
-                nodeData.outputs = Object.keys(simpleNode.branches).map(branchName => ({
-                    name: branchName, color: COLORS.default
-                }));
-            }
-
-            if (simpleNode.logic && Array.isArray(simpleNode.logic)) {
-                const subgraphId = `graph_${editorNodeId}`;
-                nodeData.subgraphId = subgraphId;
-                const subgraph = {
-                    id: subgraphId, name: simpleNode.name, nodes: [], connections: [],
-                    pan: { x: 0, y: 0 }, zoom: 1
-                };
-                this.state.graphs[subgraphId] = subgraph;
-                this._convertLegacySimpleToGraph(simpleNode.logic, subgraph);
-                this._procedurallyLayoutGraph(subgraph);
-            }
-            targetGraph.nodes.push(nodeData);
-        });
-
-        simpleNodesArray.forEach(simpleNode => {
-            const startNodeId = simpleIdToNodeIdMap.get(simpleNode._runtimeId);
-            if (!startNodeId || !simpleNode.branches) return;
-            const startNodeData = this.findNodeById(startNodeId, targetGraph.id);
-
-            for (const [branchName, targetSimpleId] of Object.entries(simpleNode.branches)) {
-                const endNodeId = simpleIdToNodeIdMap.get(targetSimpleId);
-                const outputIndex = startNodeData.outputs.findIndex(o => o.name === branchName);
-
-                if (endNodeId != null && outputIndex !== -1) {
-                    const connection = {
-                        id: `conn_${Date.now()}_${Math.random()}`,
-                        start: { nodeId: startNodeId, index: outputIndex },
-                        end: { nodeId: endNodeId, index: 0 }
-                    };
-                    targetGraph.connections.push(connection);
-                }
-            }
-        });
-    }
-
-    _generateUniqueHandle(baseName, existingHandles) {
-        let handle = (baseName || 'unnamed-node').toLowerCase()
+    generateHandle(baseName, existingHandles) {
+        let handle = (baseName || 'unnamed-node')
+            .toLowerCase()
             .trim()
             .replace(/[^a-z0-9\s-]/g, '')
-            .replace(/\s+/g, '-');
-        if (!handle) { handle = 'unnamed-node'; }
-
+            .replace(/\s+/g, '-') || 'unnamed-node';
+        
         let finalHandle = handle;
         let counter = 1;
+        
         while (existingHandles.has(finalHandle)) {
             counter++;
             finalHandle = `${handle}-${counter}`;
         }
+        
         return finalHandle;
     }
 
-    // ----- EVENT HANDLERS & INTERACTIONS -----
-
-    _onCanvasContentInput(e) {
-        if (e.target.classList.contains('node-text')) {
-            const nodeId = e.target.closest('.node')?.dataset.nodeId;
-            if (nodeId) {
-                this.updateNodeProperty(nodeId, 'text', e.target.value, e.target);
-            }
-        }
-    }
-
-    _onCanvasMouseDown(e) {
-        this.interaction.didDrag = false;
-        const target = e.target;
-        if (target.classList.contains('node-header') || target.classList.contains('node-content') || target.classList.contains('node-text')) {
-            this._startNodeDrag(e, target.closest('.node').dataset.nodeId);
-        } else if (target.classList.contains('resize-handle')) {
-            this._startNodeResize(e, target.dataset.nodeId);
-        } else if (target.classList.contains('connection-point')) {
-            this._startConnection(e, target);
-        } else if (target === this.canvas || target === this.canvasContent) {
-            if (e.button === 0) {
-                this._startSelectionBox(e);
-            } else if (e.button === 2) {
-                this._startPan(e);
-            }
-        }
-    }
-
-    _onMouseMove(e) {
-        if (this.interaction.isDragging || this.interaction.isSelecting || this.interaction.isPanning) {
-            this.interaction.didDrag = true;
-        }
-
-        const graph = this.getCurrentGraph();
-        const mousePos = this.getCanvasCoordinates(e.clientX, e.clientY);
-
-        if (this.interaction.isResizing) {
-            const dx = (e.clientX - this.interaction.panStart.x) / graph.zoom;
-            const dy = (e.clientY - this.interaction.panStart.y) / graph.zoom;
-            const node = this.interaction.resizeNode;
-
-            const newWidth = this.snapToGrid(Math.max(NODE_MIN_WIDTH, node.startWidth + dx));
-            const newHeight = this.snapToGrid(Math.max(NODE_MIN_HEIGHT, node.startHeight + dy));
-
-            const nodeData = this.findNodeById(node.id);
-            nodeData.width = newWidth;
-            nodeData.height = newHeight;
-
-            const nodeEl = this.canvasContent.querySelector(`[data-node-id="${node.id}"]`);
-            nodeEl.style.width = newWidth + 'px';
-            nodeEl.style.height = newHeight + 'px';
-            this.updateAllConnectionPaths();
-        }
-        else if (this.interaction.isDragging) {
-            this.interaction.draggedNodes.forEach(dragged => {
-                const nodeData = this.findNodeById(dragged.id);
-                const x = this.snapToGrid(mousePos.x - dragged.offsetX);
-                const y = this.snapToGrid(mousePos.y - dragged.offsetY);
-                nodeData.x = x;
-                nodeData.y = y;
-
-                const nodeEl = this.canvasContent.querySelector(`[data-node-id="${dragged.id}"]`);
-                nodeEl.style.left = x + 'px';
-                nodeEl.style.top = y + 'px';
-            });
-            this.updateAllConnectionPaths();
-        }
-        else if (this.interaction.isPanning) {
-            const dx = e.clientX - this.interaction.lastMousePosition.x;
-            const dy = e.clientY - this.interaction.lastMousePosition.y;
-            graph.pan.x += dx;
-            graph.pan.y += dy;
-            this.interaction.lastMousePosition = { x: e.clientX, y: e.clientY };
-            this._renderCanvas();
-        }
-        else if (this.interaction.isSelecting) {
-            const start = this.interaction.selectionStart;
-            const left = Math.min(start.x, mousePos.x);
-            const top = Math.min(start.y, mousePos.y);
-            const width = Math.abs(mousePos.x - start.x);
-            const height = Math.abs(mousePos.y - start.y);
-            this.selectionBox.style.left = `${left}px`;
-            this.selectionBox.style.top = `${top}px`;
-            this.selectionBox.style.width = `${width}px`;
-            this.selectionBox.style.height = `${height}px`;
-        }
-        else if (this.interaction.isConnecting) {
-            const tempLine = this.canvasContent.querySelector('.connection-line.active');
-            if (!tempLine) return;
-
-            const startPoint = this.interaction.connectionStartPoint;
-            const startNodeEl = this.canvasContent.querySelector(`[data-node-id="${startPoint.nodeId}"]`);
-            const startNodeData = this.findNodeById(startPoint.nodeId);
-
-            const startX = startNodeData.x + (startPoint.type === 'output' ? startNodeEl.offsetWidth : 0);
-            const startY = startNodeData.y + CONNECTION_POINT_Y_OFFSET + (parseInt(startPoint.index) * CONNECTION_POINT_Y_SPACING) + 8;
-
-            const path = tempLine.querySelector('path');
-            const controlOffset = Math.abs(mousePos.x - startX) * 0.5;
-            const pathData = `M ${startX} ${startY} C ${startX + controlOffset} ${startY} ${mousePos.x - controlOffset} ${mousePos.y} ${mousePos.x} ${mousePos.y}`;
-            path.setAttribute('d', pathData);
-        }
-    }
-
-    _onMouseUp(e) {
-        if (this.interaction.isDragging) {
-            this.interaction.isDragging = false;
-        }
-        else if (this.interaction.isResizing) {
-            this.interaction.isResizing = false;
-        }
-        else if (this.interaction.isPanning) {
-            this.canvas.classList.remove('panning');
-            this.interaction.isPanning = false;
-        }
-        else if (this.interaction.isSelecting) {
-            this.interaction.isSelecting = false;
-            this.selectionBox.style.display = 'none';
-
-            const box = {
-                left: parseInt(this.selectionBox.style.left),
-                top: parseInt(this.selectionBox.style.top),
-                right: parseInt(this.selectionBox.style.left) + parseInt(this.selectionBox.style.width),
-                bottom: parseInt(this.selectionBox.style.top) + parseInt(this.selectionBox.style.height)
-            };
-            this.selectNodesInBox(box);
-        }
-        else if (this.interaction.isConnecting) {
-            const tempLine = this.canvasContent.querySelector('.connection-line.active');
-            if (tempLine) tempLine.remove();
-
-            const endTarget = e.target;
-            if (endTarget.classList.contains('connection-point')) {
-                this._finishConnection(this.interaction.connectionStartPoint, endTarget.dataset);
-            }
-            this.interaction.isConnecting = false;
-            this.interaction.connectionStartPoint = null;
-        }
-    }
-
-    _onGlobalClick(e) {
-        if (this.interaction.didDrag) {
-            return;
-        }
-
-        const target = e.target;
-
-        if (!this.contextMenu.contains(target)) this.contextMenu.style.display = 'none';
-        if (!this.connectionContextMenu.contains(target)) this.connectionContextMenu.style.display = 'none';
-
-        if (target === this.canvas || target === this.canvasContent) {
-            this.clearSelection();
-        }
-
-        const nodeEl = target.closest('.node');
-        if (nodeEl && !target.classList.contains('node-text')) {
-            const nodeId = nodeEl.dataset.nodeId;
-            if (e.detail === 1) {
-                if (!this.interaction.isDragging) {
-                    if (e.ctrlKey || e.shiftKey) {
-                        if (this.state.selectedNodeIds.has(nodeId)) {
-                            this.state.selectedNodeIds.delete(nodeId);
-                        } else {
-                            this.state.selectedNodeIds.add(nodeId);
-                        }
-                    } else {
-                        if (!this.state.selectedNodeIds.has(nodeId)) {
-                            this.state.selectedNodeIds.clear();
-                            this.state.selectedNodeIds.add(nodeId);
-                        }
-                    }
-                    this.render();
-                }
-            } else if (e.detail === 2) {
-                this.enterNode(nodeId);
-            }
-        }
-
-        const path = e.target.closest('path[data-connection-id]');
-        if (path) {
-            this.state.selectedConnectionId = path.dataset.connectionId;
-            this.connectionContextMenu.style.left = `${e.clientX}px`;
-            this.connectionContextMenu.style.top = `${e.clientY}px`;
-            this.connectionContextMenu.style.display = 'block';
-        }
-    }
-
-    _onCanvasWheel(e) {
-        e.preventDefault();
-        const graph = this.getCurrentGraph();
-        const canvasRect = this.canvas.getBoundingClientRect();
-        const mousePos = {
-            x: e.clientX - canvasRect.left,
-            y: e.clientY - canvasRect.top
-        };
-
-        const oldZoom = graph.zoom;
-        const zoomChange = e.deltaY < 0 ? ZOOM_SENSITIVITY : -ZOOM_SENSITIVITY;
-        graph.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, oldZoom + zoomChange));
-
-        const zoomRatio = graph.zoom / oldZoom;
-        graph.pan.x = mousePos.x - (mousePos.x - graph.pan.x) * zoomRatio;
-        graph.pan.y = mousePos.y - (mousePos.y - graph.pan.y) * zoomRatio;
-
-        this._renderCanvas();
-    }
-
-    _onCanvasContextMenu(e) {
-        e.preventDefault();
-        if (this.interaction.isPanning) return;
-        const dx = Math.abs(e.clientX - this.interaction.panStart.x);
-        const dy = Math.abs(e.clientY - this.interaction.panStart.y);
-        if (dx > 4 || dy > 4) return;
-
-        this.contextMenu.style.left = `${e.clientX}px`;
-        this.contextMenu.style.top = `${e.clientY}px`;
-        this.contextMenu.style.display = 'block';
-
-        this.state.contextMenuTarget = this.getCanvasCoordinates(e.clientX, e.clientY);
-
-        const atRoot = this.state.navigationStack.length === 1;
-        this.contextMenu.querySelector('[data-action="add-graph-input"]').classList.toggle('disabled', atRoot);
-        this.contextMenu.querySelector('[data-action="add-graph-output"]').classList.toggle('disabled', atRoot);
-    }
-
-    _onContextMenuClick(e) {
-        const action = e.target.dataset.action;
-        if (!action || e.target.classList.contains('disabled')) return;
-
-        switch (action) {
-            case 'add-node':
-                this.addNode('default', this.state.contextMenuTarget);
-                break;
-            case 'add-graph-input':
-                this.addNode('graph-input', this.state.contextMenuTarget);
-                break;
-            case 'add-graph-output':
-                this.addNode('graph-output', this.state.contextMenuTarget);
-                break;
-            case 'delete-connection':
-                if (this.state.selectedConnectionId) {
-                    const graph = this.getCurrentGraph();
-                    graph.connections = graph.connections.filter(c => c.id !== this.state.selectedConnectionId);
-                    this.state.selectedConnectionId = null;
-                    this.render();
-                }
-                break;
-        }
-
-        this.contextMenu.style.display = 'none';
-        this.connectionContextMenu.style.display = 'none';
-    }
-
-    _onKeyDown(e) {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-
-        if (e.ctrlKey || e.metaKey) {
-            switch (e.key.toLowerCase()) {
-                case 'c': e.preventDefault(); this.copySelectedNodes(); break;
-                case 'v': e.preventDefault(); this.pasteNodes(); break;
-                case 'a':
-                    e.preventDefault();
-                    const graph = this.getCurrentGraph();
-                    graph.nodes.forEach(node => this.state.selectedNodeIds.add(node.id));
-                    this.render();
-                    break;
-            }
-        } else if (e.key === 'Delete' || e.key === 'Backspace') {
-            this.deleteSelected();
-        } else if (e.key === 'Escape') {
-            this.clearSelection();
-        }
-    }
-
-    _startNodeDrag(e, nodeId) {
-        if (e.target.classList.contains('node-text')) {
-            return;
-        }
-        e.stopPropagation();
-        this.interaction.isDragging = true;
-        const mousePos = this.getCanvasCoordinates(e.clientX, e.clientY);
-
-        if (!this.state.selectedNodeIds.has(nodeId)) {
-            if (!e.ctrlKey && !e.shiftKey) {
-                this.state.selectedNodeIds.clear();
-            }
-            this.state.selectedNodeIds.add(nodeId);
-            this.render();
-        }
-
-        this.interaction.draggedNodes = [];
-        this.state.selectedNodeIds.forEach(id => {
-            const node = this.findNodeById(id);
-            if (node) {
-                this.interaction.draggedNodes.push({
-                    id: id,
-                    offsetX: mousePos.x - node.x,
-                    offsetY: mousePos.y - node.y
-                });
-            }
-        });
-    }
-
-    _startNodeResize(e, nodeId) {
-        e.stopPropagation();
-        this.interaction.isResizing = true;
-        const nodeData = this.findNodeById(nodeId);
-
-        this.interaction.resizeNode = {
-            id: nodeId,
-            startWidth: nodeData.width,
-            startHeight: nodeData.height
-        };
-        this.interaction.panStart = { x: e.clientX, y: e.clientY };
-    }
-
-    _startPan(e) {
-        e.preventDefault();
-        this.interaction.isPanning = true;
-        this.canvas.classList.add('panning');
-        this.interaction.panStart = { x: e.clientX, y: e.clientY };
-        this.interaction.lastMousePosition = { x: e.clientX, y: e.clientY };
-    }
-
-    _startSelectionBox(e) {
-        if (!e.ctrlKey && !e.shiftKey) {
-            this.clearSelection();
-        }
-        this.interaction.isSelecting = true;
-        this.interaction.selectionStart = this.getCanvasCoordinates(e.clientX, e.clientY);
-
-        this.selectionBox.style.left = `${this.interaction.selectionStart.x}px`;
-        this.selectionBox.style.top = `${this.interaction.selectionStart.y}px`;
-        this.selectionBox.style.width = '0px';
-        this.selectionBox.style.height = '0px';
-        this.selectionBox.style.display = 'block';
-    }
-
-    _startConnection(e, startPointEl) {
-        e.stopPropagation();
-        this.interaction.isConnecting = true;
-        this.interaction.connectionStartPoint = { ...startPointEl.dataset };
-
-        const line = document.createElement('div');
-        line.className = 'connection-line active';
-        line.innerHTML = `<svg><path style="stroke:#4a9eff; stroke-width:4; fill:none;"></path></svg>`;
-        this.canvasContent.appendChild(line);
-    }
-
-    _finishConnection(startPointData, endPointData) {
-        if (startPointData.nodeId === endPointData.nodeId || startPointData.type === endPointData.type) {
-            return;
-        }
-
-        const graph = this.getCurrentGraph();
-
-        const outputData = startPointData.type === 'output' ? startPointData : endPointData;
-        const inputData = startPointData.type === 'input' ? startPointData : endPointData;
-
-        // Prevent duplicate connections
-        const exists = graph.connections.some(c =>
-            c.start.nodeId === outputData.nodeId &&
-            c.start.index === parseInt(outputData.index) &&
-            c.end.nodeId === inputData.nodeId &&
-            c.end.index === parseInt(inputData.index)
-        );
-
-        if (exists) return;
-
-        const connection = {
-            id: `conn_${Date.now()}`,
-            start: {
-                nodeId: outputData.nodeId,
-                index: parseInt(outputData.index)
-            },
-            end: {
-                nodeId: inputData.nodeId,
-                index: parseInt(inputData.index)
-            }
-        };
-
-        graph.connections.push(connection);
-        this.render();
+    downloadJSON(data, fileName) {
+        const json = JSON.stringify(data, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        link.click();
+        
+        URL.revokeObjectURL(url);
     }
 }
 
+// Initialize
 window.nodeEditor = new NodeEditor('canvas');
