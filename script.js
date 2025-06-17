@@ -627,7 +627,7 @@ class NodeEditor {
         graph.nodes.push(node);
         
         if (type !== 'default') {
-            this.updateParentInterface();
+            this.updateAllParentInterfaces();
         }
         
         this.render();
@@ -657,7 +657,7 @@ class NodeEditor {
         
         this.state.selectedNodeIds.clear();
         
-        if (ioDeleted) this.updateParentInterface();
+        if (ioDeleted) this.updateAllParentInterfaces();
         
         this.render();
     }
@@ -760,7 +760,7 @@ class NodeEditor {
             
             // Update parent if I/O node
             if (node.type !== 'default') {
-                this.updateParentInterface();
+                this.updateAllParentInterfaces();
             }
         } else if (prop === 'text') {
             const textarea = this.dom.canvasContent.querySelector(`[data-node-id="${nodeId}"] .node-text`);
@@ -786,7 +786,7 @@ class NodeEditor {
         }
         
         if (node.type !== 'default') {
-            this.updateParentInterface();
+            this.updateAllParentInterfaces();
         }
         
         this.render();
@@ -833,6 +833,29 @@ class NodeEditor {
             name: n.title,
             color: COLORS[n.color] || COLORS.default
         }));
+    }
+
+    updateAllParentInterfaces() {
+        // Update all parent node interfaces based on their subgraph input/output nodes
+        Object.values(this.state.graphs).forEach(graph => {
+            graph.nodes.forEach(node => {
+                if (node.subgraphId && this.state.graphs[node.subgraphId]) {
+                    const subgraph = this.state.graphs[node.subgraphId];
+                    const inputs = subgraph.nodes.filter(n => n.type === 'graph-input');
+                    const outputs = subgraph.nodes.filter(n => n.type === 'graph-output');
+                    
+                    node.inputs = inputs.map(n => ({
+                        name: n.title,
+                        color: COLORS[n.color] || COLORS.default
+                    }));
+                    
+                    node.outputs = outputs.map(n => ({
+                        name: n.title,
+                        color: COLORS[n.color] || COLORS.default
+                    }));
+                }
+            });
+        });
     }
 
     showConnectionMenu(connectionId, e) {
@@ -1284,6 +1307,9 @@ class NodeEditor {
         });
         this.state.nodeCounter = maxId + 1;
         
+        // Update all parent interfaces to ensure consistency
+        this.updateAllParentInterfaces();
+        
         this.render();
     }
 
@@ -1297,6 +1323,9 @@ class NodeEditor {
         rootReadable.name = data.title || 'Loaded Graph';
         
         this.convertFromReadable(rootReadable, handleToId);
+        
+        // Update all parent interfaces based on subgraph input/output nodes
+        this.updateAllParentInterfaces();
         
         // Apply procedural layout to all graphs
         Object.values(this.state.graphs).forEach(graph => {
