@@ -928,7 +928,7 @@ class NodeEditor {
         this.render();
     }
 
-	/**
+    /**
      * HELPER: Recursively flattens the readable graph format into the editor's state,
      * correctly parsing potentially ambiguous pin names.
      */
@@ -946,34 +946,40 @@ class NodeEditor {
             const internalNodeId = `node_${this.state.nodeCounter++}`;
             handleToNodeIdMap.set(readableNode.id, internalNodeId);
             
-            // --- REPLACEMENT START ---
-            // Build the new node object explicitly instead of spreading.
-            // This is more robust and avoids potential property conflicts.
             const newNode = {
-                title: readableNode.title,
-                text: readableNode.text,
-                color: readableNode.color,
-                type: readableNode.type,
-                inputs: readableNode.inputs,
-                outputs: readableNode.outputs,
+                ...readableNode,
                 id: internalNodeId,
                 x: 0, 
                 y: 0,
                 width: NODE_MIN_WIDTH,
                 height: NODE_MIN_HEIGHT,
-                subgraphId: null, // Initialize subgraphId to null
             };
-            // --- REPLACEMENT END ---
 
+            // Handle existing subgraph from JSON
             if (readableNode.subgraph) {
-                const subgraphData = readableNode.subgraph;
-                subgraphData.id = `graph_${internalNodeId}`;
-                subgraphData.name = readableNode.title;
-                newNode.subgraphId = subgraphData.id; // Set the link to the subgraph
-                
-                // Recurse to process the subgraph
-                this._convertReadableToState(subgraphData, flatGraphs, handleToNodeIdMap);
+                const subgraph = readableNode.subgraph;
+                subgraph.id = `graph_${internalNodeId}`;
+                subgraph.name = readableNode.title;
+                newNode.subgraphId = subgraph.id;
+                this._convertReadableToState(subgraph, flatGraphs, handleToNodeIdMap);
+                delete newNode.subgraph;
             }
+            // CREATE EMPTY SUBGRAPH FOR DEFAULT NODES WITHOUT EXISTING SUBGRAPHS
+            else if (newNode.type === 'default') {
+                // Create empty subgraph for consistency with addNode behavior
+                const subgraphId = `graph_${internalNodeId}`;
+                const emptySubgraph = {
+                    id: subgraphId,
+                    name: newNode.title,
+                    nodes: [],
+                    connections: [],
+                    pan: { x: 0, y: 0 },
+                    zoom: 1,
+                };
+                flatGraphs[subgraphId] = emptySubgraph;
+                newNode.subgraphId = subgraphId;
+            }
+            
             newGraph.nodes.push(newNode);
         });
 
